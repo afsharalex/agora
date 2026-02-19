@@ -60,7 +60,7 @@ config = AgentConfig.new!(
 
 - **Error handling**: Always `{:ok, result} | {:error, %Agora.Error{}}` — no exceptions for control flow.
 - **Constructors**: `new/1` returns `{:ok, struct}`, `new!/1` raises. Structs use `@derive Jason.Encoder`.
-- **Tests**: All use `async: true`. Mirror source structure under `test/agora/`. Organized into `describe` blocks per function.
+- **Tests**: Default `async: true`. Tests that mutate `Application` env use `async: false` in separate modules (e.g., `*_config_test.exs`). Mirror source structure under `test/agora/`. Organized into `describe` blocks per function.
 - **Config**: Runtime API keys via environment variables in `config/runtime.exs`. Provider-specific keys follow the `<provider>_api_key` naming convention.
 
 ## Current Status

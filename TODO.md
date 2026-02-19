@@ -34,35 +34,43 @@ Set up dependencies, configuration, and core data structures that every subseque
 
 ---
 
-## Phase 1: Provider Abstraction Layer
+## Phase 1: Provider Abstraction Layer ✅
 
 Unified LLM interface so agents are provider-agnostic.
 
 ### Provider Behaviour
 
-- [ ] `Agora.Provider` behaviour — `@callback chat(messages, config) :: {:ok, Message.t()} | {:error, Error.t()}`
-- [ ] Define provider config options schema (api_key, base_url, headers, timeout)
-- [ ] Normalize message format across providers (role mapping, tool_call format translation)
+- [x] `Agora.Provider` behaviour — `@callback chat(messages, config) :: {:ok, Message.t()} | {:error, Error.t()}`
+- [x] Define provider config options schema (api_key, base_url, headers, timeout)
+  - Provider-namespaced app config fallback (`get_opt/3` reads `:anthropic_base_url`, `:openai_timeout`, etc.)
+  - API key lookup: `provider_opts[:api_key]` → `Config.api_key(:provider)` — no generic `:api_key` leakage
+- [x] Normalize message format across providers (role mapping, tool_call format translation)
 
 ### Implementations
 
-- [ ] `Agora.Provider.Echo` — test/dev provider that echoes input or returns canned responses
-  - [ ] Unit tests for Echo provider
-- [ ] `Agora.Provider.Anthropic` — Messages API integration
-  - [ ] Map Agora messages to Anthropic format (system separate from messages, tool_use/tool_result content blocks)
-  - [ ] Parse tool_use blocks from response into `ToolCall` structs
-  - [ ] Handle API errors, rate limits, and retries
-  - [ ] Unit tests with mocked HTTP responses
-- [ ] `Agora.Provider.OpenAI` — Chat Completions API integration
-  - [ ] Map Agora messages to OpenAI format (tool_calls in assistant messages, tool role for results)
-  - [ ] Parse tool_calls from response into `ToolCall` structs
-  - [ ] Handle API errors, rate limits, and retries
-  - [ ] Unit tests with mocked HTTP responses
+- [x] `Agora.Provider.Echo` — test/dev provider with 6 configurable modes
+  - [x] Unit tests for Echo provider
+- [x] `Agora.Provider.Anthropic` — Messages API integration
+  - [x] Map Agora messages to Anthropic format (system separate from messages, tool_use/tool_result content blocks)
+  - [x] Parse tool_use blocks from response into `ToolCall` structs
+  - [x] Handle API errors, rate limits, and retries (opt-in via `retry: :transient` in `req_options`)
+  - [x] Adjacent same-role message merging (Anthropic requires alternating roles)
+  - [x] Custom header merging without clobbering auth headers
+  - [x] Unit tests with mocked HTTP responses (Req.Test plug injection)
+  - [x] Config fallback tests (`async: false`) for app-level API key, base_url, timeout
+- [x] `Agora.Provider.OpenAI` — Chat Completions API integration
+  - [x] Map Agora messages to OpenAI format (tool_calls in assistant messages, tool role for results)
+  - [x] Parse tool_calls from response into `ToolCall` structs (JSON string decode with malformed fallback)
+  - [x] Handle API errors, rate limits, and retries (opt-in via `retry: :transient` in `req_options`)
+  - [x] One Agora `:tool` message with N results expands to N separate OpenAI `tool` messages
+  - [x] Custom header merging without clobbering auth headers
+  - [x] Unit tests with mocked HTTP responses (Req.Test plug injection)
+  - [x] Config fallback tests (`async: false`) for app-level API key, base_url, timeout
 
 ### Integration
 
-- [ ] Provider resolution from AgentConfig (atom/module lookup)
-- [ ] Integration test with Echo provider end-to-end
+- [x] Provider resolution from AgentConfig (atom/module lookup with `resolve/1`)
+- [x] Integration test with Echo provider end-to-end
 
 ---
 

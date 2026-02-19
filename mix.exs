@@ -26,6 +26,7 @@ defmodule Agora.MixProject do
     [
       {:jason, "~> 1.4"},
       {:req, "~> 0.5"},
+      {:plug, "~> 1.0", only: :test},
       {:nimble_options, "~> 1.1"},
       {:telemetry, "~> 1.3"},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
