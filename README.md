@@ -65,24 +65,68 @@ config :agora,
   openai_api_key: System.get_env("OPENAI_API_KEY")
 ```
 
-### Send a message
+### Run an agent
 
 ```elixir
-alias Agora.{AgentConfig, Message, Provider}
+alias Agora.{AgentConfig, Agent}
 
-# Create a config
 config = AgentConfig.new!(
   provider: :anthropic,
   model: "claude-sonnet-4-20250514",
   instructions: "You are a helpful assistant."
 )
 
-# Resolve the provider and send a message
-provider = Provider.resolve(config.provider)
-{:ok, response} = provider.chat([Message.user("Hello!")], config)
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, response} = Agent.run(pid, "Hello!")
 
 IO.puts(response.content)
 # => "Hello! How can I help you today?"
+```
+
+### Agent with tools
+
+```elixir
+alias Agora.{AgentConfig, Agent}
+alias Agora.Tool.Calculator
+
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  instructions: "Use the calculator tool when asked math questions.",
+  tools: [Calculator]
+)
+
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, response} = Agent.run(pid, "What is 42 * 17?")
+# Agent calls Calculator tool, feeds result back to LLM, returns final answer
+```
+
+### Supervised agents
+
+```elixir
+config = AgentConfig.new!(provider: :anthropic, model: "claude-sonnet-4-20250514")
+
+# Start under the built-in DynamicSupervisor
+{:ok, pid} = Agora.start_agent(config)
+{:ok, response} = Agent.run(pid, "Hello!")
+
+# Stop when done
+Agora.stop_agent(pid)
+```
+
+### Direct provider calls
+
+For one-off calls without the agent loop:
+
+```elixir
+alias Agora.{AgentConfig, Message, Provider}
+
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514"
+)
+
+{:ok, response} = Provider.chat(:anthropic, [Message.user("Hello!")], config)
 ```
 
 ### Use OpenAI instead
@@ -94,8 +138,8 @@ config = AgentConfig.new!(
   instructions: "You are a helpful assistant."
 )
 
-provider = Provider.resolve(config.provider)
-{:ok, response} = provider.chat([Message.user("Hello!")], config)
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, response} = Agent.run(pid, "Hello!")
 ```
 
 ### Per-agent provider options
@@ -137,20 +181,26 @@ All providers implement the `Agora.Provider` behaviour:
 ## Architecture
 
 ```
-AgentConfig --> Provider.chat(messages, config) --> {:ok, Message.t()} | {:error, Error.t()}
+User → Agent.run/2 → reasoning loop:
+  Provider.chat/3 → response
+    ├─ tool_calls? → ToolBroker.execute/2 → tool_results → loop
+    └─ text only?  → return {:ok, Message.t()}
 ```
 
 ### Core modules
 
 | Module | Purpose |
 |--------|---------|
-| `Agora.Message` | Universal message struct (role, content, tool_calls, tool_results, metadata) |
+| `Agora.Agent` | GenServer with reasoning loop (provider call → tool execution → repeat) |
+| `Agora.Agent.Supervisor` | DynamicSupervisor for agent lifecycle management |
 | `Agora.AgentConfig` | NimbleOptions-validated configuration |
 | `Agora.Provider` | Behaviour + resolution (`resolve/1` maps atoms to modules) |
+| `Agora.Message` | Universal message struct (role, content, tool_calls, tool_results, metadata) |
 | `Agora.Error` | Typed errors: `:provider_error`, `:auth_error`, `:rate_limit`, `:timeout`, etc. |
+| `Agora.Tool` | Behaviour for defining tools + `FunctionTool` for inline definitions |
+| `Agora.ToolBroker` | Supervised parallel tool execution with timeout enforcement |
+| `Agora.Tool.Schema` | JSON Schema helpers for tool parameter validation |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
-| `Agora.ToolCall` | Represents a tool invocation from the model |
-| `Agora.ToolResult` | Represents a tool execution result |
 
 ### Config resolution order
 
@@ -183,8 +233,8 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 0 | Project Foundation | Complete |
 | 1 | Provider Abstraction Layer | Complete |
 | 2 | Tool System | Complete |
-| 3 | Agent Runtime | Next |
-| 4 | Middleware System | Planned |
+| 3 | Agent Runtime | Complete |
+| 4 | Middleware System | Next |
 | 5 | Orchestration | Planned |
 | 6 | Memory System | Planned |
 | 7 | Observability | Planned |

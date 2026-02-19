@@ -127,37 +127,66 @@ First-class tool execution with validation and supervised parallel support.
 
 ---
 
-## Phase 3: Agent Runtime
+## Phase 3: Agent Runtime ✅
 
 The core agent process with the default reasoning/action loop.
 
 ### Agent GenServer
 
-- [ ] `Agora.Agent` — GenServer implementing the agent loop
-  - [ ] `start_link/1` accepting `AgentConfig`
-  - [ ] `run/2` — send a task/message and get final response
-  - [ ] Internal state: config, messages (conversation history), status (idle/running/awaiting_tool/awaiting_approval)
-  - [ ] Reasoning loop:
-    1. Build context (instructions + history + new input)
-    2. Call provider
-    3. Check for tool calls in response
-    4. If tool calls → execute via ToolBroker → append results → loop
-    5. If no tool calls → return final response
-  - [ ] Iteration limit from `AgentConfig.max_iterations` (default 10)
-  - [ ] Emit telemetry events at each loop step (prep for Phase 7)
+- [x] `Agora.Agent` — GenServer implementing the agent loop
+  - [x] `start_link/1` accepting keyword opts with required `:config` key and optional `:name`
+  - [x] `run/2` — send a string or `Message` and get final response; blocks via `GenServer.call(:infinity)`
+  - [x] `get_messages/1`, `get_status/1` — state introspection
+  - [x] Internal state: config, messages (conversation history), status (`:idle` | `:running`), iteration counter
+  - [x] Reasoning loop (tail-recursive private function):
+    1. Check iteration limit → return `{:error, %Error{type: :iteration_limit}}` if exceeded
+    2. Call `Provider.chat/3`
+    3. If tool calls → append assistant message → execute via `ToolBroker.execute/2` → append tool results → recurse
+    4. If no tool calls → append assistant message → return `{:ok, response}`
+    5. If provider error → return `{:error, error}`
+  - [x] Iteration limit from `AgentConfig.max_iterations` (default 10)
+  - [x] Telemetry events emitted with sanitized metadata (provider, model, agent_name, max_iterations only — no API keys):
+    - `[:agora, :agent, :run, :start | :stop]`
+    - `[:agora, :agent, :loop_iteration, :start | :stop]`
+  - [x] Crash protection: `try/catch` around reasoning loop converts raise/exit/throw to `{:error, %Error{type: :unknown}}`
+  - [x] Crash errors are JSON-encodable (metadata contains only string values)
+  - [x] Partial history preserved on mid-loop crash via process dictionary tracking
+  - [x] `child_spec/1` overrides `restart: :temporary` (no restart on crash until Phase 6 Memory)
+
+### Concurrency Model
+
+- [x] Synchronous `run/2` — executes inside `handle_call`, concurrent calls queue (GenServer mailbox serialization)
+- [x] Messages persist across `run/2` calls in GenServer state
+- [x] Status `:idle` | `:running` — `:running` set during loop but not externally observable via `get_status/1` due to call serialization
 
 ### Supervision
 
-- [ ] `Agora.AgentSupervisor` — DynamicSupervisor for agent processes
-- [ ] `Agora.start_agent/1` and `Agora.stop_agent/1` convenience functions
-- [ ] Add AgentSupervisor to Application supervision tree (Task.Supervisor already present from Phase 2)
+- [x] `Agora.Agent.Supervisor` — DynamicSupervisor for agent processes
+  - [x] `start_agent/2` — starts an `Agora.Agent` child from config + opts
+  - [x] `stop_agent/1` — terminates a child by pid
+- [x] `Agora.start_agent/2` and `Agora.stop_agent/1` convenience functions delegating to supervisor
+- [x] `Agora.Agent.Supervisor` added to Application supervision tree after `Agora.ToolSupervisor`
 
 ### Testing
 
-- [ ] Unit tests for agent loop with Echo provider and mock tools
-- [ ] Test iteration limit triggers proper termination
-- [ ] Test tool call → result → re-prompt cycle
-- [ ] End-to-end integration test: agent + Echo provider + Calculator tool
+- [x] Unit tests for agent loop with Echo provider and FunctionTool tools (agent_test.exs)
+  - [x] start_link: process start, status, system message, name registration
+  - [x] run: string input, Message input, history accumulation
+  - [x] Conversation persistence across multiple runs
+  - [x] Provider error propagation and status recovery
+  - [x] Crash protection: raise/exit/throw caught, JSON-encodable errors, partial history preserved, agent reusable after crash
+  - [x] Concurrent run queuing: two async calls both complete
+  - [x] Tool call loop: single tool, multiple tools in one turn
+  - [x] Iteration limit triggers `:iteration_limit` error
+  - [x] System message preserved through tool loop iterations
+  - [x] Telemetry events emitted with sanitized metadata (no config/secrets)
+- [x] Supervisor tests (agent/supervisor_test.exs): start/stop agents, name registration
+- [x] End-to-end integration tests (agent_integration_test.exs): Agent + Echo + Calculator
+  - [x] Full tool call cycle with real Calculator tool
+  - [x] Multi-step calculation with conversation persistence
+  - [x] Tool error (division by zero) fed back to provider
+  - [x] `Agora.start_agent/2` and `Agora.stop_agent/1` convenience functions
+- [x] 272 total tests (31 new), 0 failures
 
 ---
 
@@ -392,7 +421,11 @@ Polish the public API surface, write documentation, build examples, and prepare 
 | Tool timeout | Deadline-based + brutal_kill | Per-tool timeouts enforced from spawn time; no grace period for exit-trapping tasks |
 | Middleware model | Chain with `next` | Familiar (Plug-style), composable, supports halt semantics |
 | Orchestrators | Separate from agents | Agents stay simple; coordination is a distinct concern |
-| State model | Minimal enum | idle/running/awaiting_tool/awaiting_approval — avoid state machine complexity |
+| State model | Minimal enum | `:idle` / `:running` — synchronous `handle_call` means `:running` isn't externally observable; future phases (streaming, middleware) may expand |
+| Agent crash handling | `try/catch` + `:unknown` error type | Catches raise/exit/throw; uses `:unknown` (not `:provider_error`) since crash source is ambiguous; metadata stringified for JSON safety |
+| Agent concurrency | Queuing (GenServer default) | Concurrent `run/2` calls queue behind each other; simpler than async rejection; iteration limit bounds each run |
+| Telemetry metadata | Sanitized (no config) | Only provider/model/agent_name/max_iterations emitted; `provider_opts` excluded to prevent API key leakage |
+| Crash history | Process dictionary tracking | `reasoning_loop` stores latest messages in process dictionary each iteration; catch block recovers partial history instead of losing it |
 | Memory | Behaviour + backends | Swappable storage; Buffer for dev, File for persistence, extensible to ETS/DB |
 
 ---

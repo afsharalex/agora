@@ -8,7 +8,8 @@ defmodule Agora.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Task.Supervisor, name: Agora.ToolSupervisor}
+      {Task.Supervisor, name: Agora.ToolSupervisor},
+      Agora.Agent.Supervisor
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
