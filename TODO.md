@@ -11,26 +11,26 @@ Set up dependencies, configuration, and core data structures that every subseque
 
 ### Dependencies
 
-- [ ] Add `jason ~> 1.4` — JSON encoding/decoding
-- [ ] Add `req ~> 0.5` — HTTP client for provider API calls
-- [ ] Add `nimble_options ~> 1.1` — declarative schema validation for configs
-- [ ] Add `telemetry ~> 1.3` — event instrumentation and observability
-- [ ] Add `ex_doc` and `dialyxir` as dev-only deps
-- [ ] Run `mix deps.get` and verify compilation
+- [x] Add `jason ~> 1.4` — JSON encoding/decoding
+- [x] Add `req ~> 0.5` — HTTP client for provider API calls
+- [x] Add `nimble_options ~> 1.1` — declarative schema validation for configs
+- [x] Add `telemetry ~> 1.3` — event instrumentation and observability
+- [x] Add `ex_doc` and `dialyxir` as dev-only deps
+- [x] Run `mix deps.get` and verify compilation
 
 ### Core Structs
 
-- [ ] `Agora.Message` — role, content, tool_calls, tool_results, metadata, timestamps
-- [ ] `Agora.ToolCall` — id, name, arguments (decoded map), status
-- [ ] `Agora.ToolResult` — tool_call_id, name, content, is_error flag
-- [ ] `Agora.AgentConfig` — provider, model, instructions, tools, memory, middleware, max_iterations, name
-  - [ ] Validate with NimbleOptions schema
-- [ ] `Agora.Error` — structured error type (provider_error, tool_error, validation_error, timeout, etc.)
+- [x] `Agora.Message` — role, content, tool_calls, tool_results, metadata, timestamps
+- [x] `Agora.ToolCall` — id, name, arguments (decoded map), status
+- [x] `Agora.ToolResult` — tool_call_id, name, content, is_error flag
+- [x] `Agora.AgentConfig` — provider, model, instructions, tools, memory, middleware, max_iterations, name
+  - [x] Validate with NimbleOptions schema
+- [x] `Agora.Error` — structured error type (provider_error, tool_error, validation_error, timeout, etc.)
 
 ### Configuration
 
-- [ ] `Agora.Config` module — application-level config helpers (provider API keys, defaults)
-- [ ] Support runtime config via `config/runtime.exs` pattern
+- [x] `Agora.Config` module — application-level config helpers (provider API keys, defaults)
+- [x] Support runtime config via `config/runtime.exs` pattern
 
 ---
 
