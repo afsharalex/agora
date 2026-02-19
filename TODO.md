@@ -74,44 +74,56 @@ Unified LLM interface so agents are provider-agnostic.
 
 ---
 
-## Phase 2: Tool System
+## Phase 2: Tool System ✅
 
-First-class tool execution with validation, permissions, and async support.
+First-class tool execution with validation and supervised parallel support.
 
 ### Tool Behaviour
 
-- [ ] `Agora.Tool` behaviour
-  - [ ] `@callback name() :: String.t()`
-  - [ ] `@callback description() :: String.t()`
-  - [ ] `@callback schema() :: map()` — JSON Schema for parameters
-  - [ ] `@callback execute(args :: map(), context :: map()) :: {:ok, any()} | {:error, any()}`
+- [x] `Agora.Tool` behaviour
+  - [x] `@callback name() :: String.t()`
+  - [x] `@callback description() :: String.t()`
+  - [x] `@callback schema() :: map()` — JSON Schema for parameters
+  - [x] `@callback execute(args :: map(), context :: map()) :: {:ok, any()} | {:error, any()}`
+  - [x] `@callback timeout() :: pos_integer()` — optional, default 30_000
+  - [x] Helper functions: `to_definition/1`, `resolve/2`, `execute/3`, `timeout/1`, `tool_name/1`
 
 ### FunctionTool Adapter
 
-- [ ] `Agora.Tool.FunctionTool` — wrap a plain `{name, description, schema, fun}` tuple as a Tool
-- [ ] Macro or helper for inline tool definition without full module
+- [x] `Agora.Tool.FunctionTool` — struct wrapping `{name, description, schema, function, timeout}` as a Tool
+  - [x] `new/1` / `new!/1` constructors with field validation
+  - [x] `@derive {Jason.Encoder, except: [:function]}` — safe JSON serialization
 
 ### Schema Helpers
 
-- [ ] `Agora.Tool.Schema` — helpers to build JSON Schema maps for tool parameters
-  - [ ] `string/1`, `integer/1`, `boolean/1`, `array/2`, `object/2`, `enum/2`
-  - [ ] `required/2` wrapper
+- [x] `Agora.Tool.Schema` — helpers to build JSON Schema maps for tool parameters
+  - [x] `string/1`, `integer/1`, `number/1`, `boolean/1`, `array/2`, `object/2`, `enum/2`
+  - [x] `required/2` wrapper — adds required fields to existing object schema
+  - [x] `validate/2` — lightweight type checking with path-aware error messages
+    - [x] Required fields, enum membership, nested object/array validation
 
 ### ToolBroker
 
-- [ ] `Agora.ToolBroker` — centralized tool execution manager
-  - [ ] Tool registry (name -> module lookup)
-  - [ ] Argument validation against tool schema
-  - [ ] Execute via `Task.Supervisor` for isolation and fault tolerance
-  - [ ] Support parallel tool fan-out (multiple tool calls in one turn)
-  - [ ] Timeout enforcement per tool call
-  - [ ] Return `ToolResult` structs
+- [x] `Agora.ToolBroker` — stateless tool execution manager
+  - [x] Name→tool lookup from tools list (modules, FunctionTool structs, plain maps)
+  - [x] Argument validation against tool schema (opt-out with `validate: false`)
+  - [x] Execute via `Task.Supervisor` (`Agora.ToolSupervisor`) for isolation and fault tolerance
+  - [x] Support parallel tool fan-out (multiple tool calls in one turn)
+  - [x] Deadline-based timeout enforcement per tool call with `:brutal_kill` shutdown
+  - [x] Return `{:ok, [ToolResult.t()]}` always — individual failures become error results
+  - [x] Catches exceptions, throws, and exits from misbehaving tools
+
+### Provider Integration
+
+- [x] Providers normalize tools via `AgentConfig.tool_definitions/1` — modules and FunctionTool structs serialize correctly alongside plain maps
+- [x] `AgentConfig.tool_definitions/1` converts tools list to provider-consumable definition maps
+- [x] `Agora.ToolSupervisor` added to Application supervision tree
 
 ### Example Tools
 
-- [ ] `Agora.Tool.Calculator` — basic arithmetic for testing
-- [ ] `Agora.Tool.DateTime` — current date/time tool
-- [ ] Tests for each tool and ToolBroker execution
+- [x] `Agora.Tool.Calculator` — basic arithmetic (add, subtract, multiply, divide) with division-by-zero handling
+- [x] `Agora.Tool.DateTime` — current date/time in three formats (date, time, datetime)
+- [x] Tests for each tool, schema builders/validation, FunctionTool, ToolBroker execution (112 new tests)
 
 ---
 
@@ -138,7 +150,7 @@ The core agent process with the default reasoning/action loop.
 
 - [ ] `Agora.AgentSupervisor` — DynamicSupervisor for agent processes
 - [ ] `Agora.start_agent/1` and `Agora.stop_agent/1` convenience functions
-- [ ] Add AgentSupervisor + Task.Supervisor to Application supervision tree
+- [ ] Add AgentSupervisor to Application supervision tree (Task.Supervisor already present from Phase 2)
 
 ### Testing
 
@@ -374,6 +386,10 @@ Polish the public API surface, write documentation, build examples, and prepare 
 | JSON library | `Jason` | De facto Elixir standard, fast native encoding |
 | Agent loop | Synchronous first | Simpler to reason about; streaming added in Phase 9 |
 | Tool definition | Behaviour | Compile-time checking; FunctionTool adapter for ad-hoc tools |
+| Schema validation | Lightweight in-house | Covers practical subset (types, required, enum, nested); `ex_json_schema` overkill |
+| ToolBroker | Stateless module | Tools come from AgentConfig, no GenServer registry needed |
+| Broker return type | `{:ok, [ToolResult]}` always | Agent loop needs all results (successes and errors) to send back to LLM |
+| Tool timeout | Deadline-based + brutal_kill | Per-tool timeouts enforced from spawn time; no grace period for exit-trapping tasks |
 | Middleware model | Chain with `next` | Familiar (Plug-style), composable, supports halt semantics |
 | Orchestrators | Separate from agents | Agents stay simple; coordination is a distinct concern |
 | State model | Minimal enum | idle/running/awaiting_tool/awaiting_approval — avoid state machine complexity |

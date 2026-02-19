@@ -89,4 +89,59 @@ defmodule Agora.AgentConfigTest do
       assert Keyword.has_key?(schema, :model)
     end
   end
+
+  describe "tool_definitions/1" do
+    test "converts module tools to definition maps" do
+      config = AgentConfig.new!(@valid_opts ++ [tools: [Agora.Tool.Calculator]])
+      [defn] = AgentConfig.tool_definitions(config)
+
+      assert defn["name"] == "calculator"
+      assert is_binary(defn["description"])
+      assert is_map(defn["parameters"])
+    end
+
+    test "converts FunctionTool structs to definition maps" do
+      ft =
+        Agora.Tool.FunctionTool.new!(
+          name: "test_fn",
+          description: "A test",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _, _ -> {:ok, nil} end
+        )
+
+      config = AgentConfig.new!(@valid_opts ++ [tools: [ft]])
+      [defn] = AgentConfig.tool_definitions(config)
+
+      assert defn["name"] == "test_fn"
+      assert defn["description"] == "A test"
+    end
+
+    test "passes plain maps through as-is" do
+      plain = %{"name" => "raw", "description" => "raw tool", "parameters" => %{}}
+      config = AgentConfig.new!(@valid_opts ++ [tools: [plain]])
+      assert AgentConfig.tool_definitions(config) == [plain]
+    end
+
+    test "handles mixed tool formats" do
+      ft =
+        Agora.Tool.FunctionTool.new!(
+          name: "fn_tool",
+          description: "inline",
+          schema: %{},
+          function: fn _, _ -> {:ok, nil} end
+        )
+
+      plain = %{"name" => "raw", "description" => "raw", "parameters" => %{}}
+      config = AgentConfig.new!(@valid_opts ++ [tools: [Agora.Tool.Calculator, ft, plain]])
+
+      defs = AgentConfig.tool_definitions(config)
+      assert length(defs) == 3
+      assert Enum.map(defs, & &1["name"]) == ["calculator", "fn_tool", "raw"]
+    end
+
+    test "returns empty list for no tools" do
+      config = AgentConfig.new!(@valid_opts)
+      assert AgentConfig.tool_definitions(config) == []
+    end
+  end
 end

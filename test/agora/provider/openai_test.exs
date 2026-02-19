@@ -284,6 +284,53 @@ defmodule Agora.Provider.OpenAITest do
       cfg = config(tools: tools)
       assert {:ok, _msg} = OpenAI.chat([Message.user("Hi")], cfg)
     end
+
+    test "formats module tools via tool_definitions" do
+      Req.Test.stub(__MODULE__, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+
+        [tool] = decoded["tools"]
+        assert tool["type"] == "function"
+        assert tool["function"]["name"] == "calculator"
+        assert is_binary(tool["function"]["description"])
+        assert tool["function"]["parameters"]["type"] == "object"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(ok_response("OK")))
+      end)
+
+      cfg = config(tools: [Agora.Tool.Calculator])
+      assert {:ok, _msg} = OpenAI.chat([Message.user("Hi")], cfg)
+    end
+
+    test "formats FunctionTool structs via tool_definitions" do
+      Req.Test.stub(__MODULE__, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+
+        [tool] = decoded["tools"]
+        assert tool["type"] == "function"
+        assert tool["function"]["name"] == "greet"
+        assert tool["function"]["description"] == "Says hello"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(ok_response("OK")))
+      end)
+
+      ft =
+        Agora.Tool.FunctionTool.new!(
+          name: "greet",
+          description: "Says hello",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _, _ -> {:ok, "hi"} end
+        )
+
+      cfg = config(tools: [ft])
+      assert {:ok, _msg} = OpenAI.chat([Message.user("Hi")], cfg)
+    end
   end
 
   describe "error handling" do

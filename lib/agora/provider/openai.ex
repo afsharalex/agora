@@ -51,7 +51,7 @@ defmodule Agora.Provider.OpenAI do
       "messages" => openai_messages
     }
 
-    maybe_add_tools(body, config.tools)
+    maybe_add_tools(body, AgentConfig.tool_definitions(config))
   end
 
   defp translate_messages(messages, config) do
@@ -128,11 +128,11 @@ defmodule Agora.Provider.OpenAI do
         %{
           "type" => "function",
           "function" => %{
-            "name" => to_string(tool[:name] || tool["name"]),
-            "description" => tool[:description] || tool["description"] || "",
+            "name" => to_string(tool["name"] || tool[:name]),
+            "description" => tool["description"] || tool[:description] || "",
             "parameters" =>
-              tool[:parameters] || tool[:input_schema] || tool["parameters"] ||
-                tool["input_schema"] || %{}
+              tool["parameters"] || tool[:parameters] || tool["input_schema"] ||
+                tool[:input_schema] || %{}
           }
         }
       end)

@@ -138,4 +138,22 @@ defmodule Agora.AgentConfig do
       {:error, error} -> raise ArgumentError, to_string(error)
     end
   end
+
+  @doc """
+  Converts the config's tools list to provider-consumable definition maps.
+
+  Handles three tool formats:
+    * Module implementing `Agora.Tool` behaviour
+    * `%Agora.Tool.FunctionTool{}` struct
+    * Plain map (passed through as-is)
+
+  """
+  @spec tool_definitions(t()) :: [map()]
+  def tool_definitions(%__MODULE__{tools: tools}) do
+    Enum.map(tools, fn
+      tool when is_atom(tool) -> Agora.Tool.to_definition(tool)
+      %Agora.Tool.FunctionTool{} = ft -> Agora.Tool.to_definition(ft)
+      %{} = map -> map
+    end)
+  end
 end

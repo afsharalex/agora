@@ -56,8 +56,7 @@ defmodule Agora.Provider.Anthropic do
       }
 
     body = if system_text != "", do: Map.put(body, "system", system_text), else: body
-    body = maybe_add_tools(body, config.tools)
-    body
+    maybe_add_tools(body, AgentConfig.tool_definitions(config))
   end
 
   defp extract_system(messages, config) do
@@ -178,11 +177,11 @@ defmodule Agora.Provider.Anthropic do
     tool_defs =
       Enum.map(tools, fn tool ->
         %{
-          "name" => to_string(tool[:name] || tool["name"]),
-          "description" => tool[:description] || tool["description"] || "",
+          "name" => to_string(tool["name"] || tool[:name]),
+          "description" => tool["description"] || tool[:description] || "",
           "input_schema" =>
-            tool[:parameters] || tool[:input_schema] || tool["parameters"] || tool["input_schema"] ||
-              %{}
+            tool["parameters"] || tool[:parameters] || tool["input_schema"] ||
+              tool[:input_schema] || %{}
         }
       end)
 

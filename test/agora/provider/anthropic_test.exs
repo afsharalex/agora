@@ -325,6 +325,64 @@ defmodule Agora.Provider.AnthropicTest do
       cfg = config(tools: tools)
       assert {:ok, _msg} = Anthropic.chat([Message.user("Hi")], cfg)
     end
+
+    test "formats module tools via tool_definitions" do
+      Req.Test.stub(__MODULE__, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+
+        [tool] = decoded["tools"]
+        assert tool["name"] == "calculator"
+        assert is_binary(tool["description"])
+        assert tool["input_schema"]["type"] == "object"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{
+            "content" => [%{"type" => "text", "text" => "OK"}],
+            "stop_reason" => "end_turn"
+          })
+        )
+      end)
+
+      cfg = config(tools: [Agora.Tool.Calculator])
+      assert {:ok, _msg} = Anthropic.chat([Message.user("Hi")], cfg)
+    end
+
+    test "formats FunctionTool structs via tool_definitions" do
+      Req.Test.stub(__MODULE__, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+
+        [tool] = decoded["tools"]
+        assert tool["name"] == "greet"
+        assert tool["description"] == "Says hello"
+        assert tool["input_schema"] == %{"type" => "object", "properties" => %{}}
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{
+            "content" => [%{"type" => "text", "text" => "OK"}],
+            "stop_reason" => "end_turn"
+          })
+        )
+      end)
+
+      ft =
+        Agora.Tool.FunctionTool.new!(
+          name: "greet",
+          description: "Says hello",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _, _ -> {:ok, "hi"} end
+        )
+
+      cfg = config(tools: [ft])
+      assert {:ok, _msg} = Anthropic.chat([Message.user("Hi")], cfg)
+    end
   end
 
   describe "error handling" do
