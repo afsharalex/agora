@@ -182,8 +182,8 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 |-------|------|--------|
 | 0 | Project Foundation | Complete |
 | 1 | Provider Abstraction Layer | Complete |
-| 2 | Tool System | Next |
-| 3 | Agent Runtime | Planned |
+| 2 | Tool System | Complete |
+| 3 | Agent Runtime | Next |
 | 4 | Middleware System | Planned |
 | 5 | Orchestration | Planned |
 | 6 | Memory System | Planned |
