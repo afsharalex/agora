@@ -123,9 +123,6 @@ defmodule Agora.ToolBroker do
     else
       {:error, message} when is_binary(message) ->
         ToolResult.error(tool_call.id, tool_call.name, message)
-
-      {:error, %Agora.Error{message: message}} ->
-        ToolResult.error(tool_call.id, tool_call.name, message)
     end
   catch
     :exit, reason ->

@@ -262,7 +262,6 @@ defmodule Agora.Tool.Schema do
 
   defp validate_nested_required(_value, _schema, _path, errors), do: errors
 
-  defp format_error([], message), do: message
   defp format_error(path, message), do: "#{Enum.join(path, ".")}: #{message}"
 
   defp maybe_add_description(schema, opts) do
