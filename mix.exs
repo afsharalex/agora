@@ -1,17 +1,20 @@
 defmodule Agora.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+
   def project do
     [
       app: :agora,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      dialyzer: [plt_add_apps: [:mix]],
+      docs: [main: "Agora", extras: ["docs/Design-v0.md"]]
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
       extra_applications: [:logger],
@@ -19,11 +22,14 @@ defmodule Agora.MixProject do
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      {:jason, "~> 1.4"},
+      {:req, "~> 0.5"},
+      {:nimble_options, "~> 1.1"},
+      {:telemetry, "~> 1.3"},
+      {:ex_doc, "~> 0.35", only: :dev, runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 end

@@ -1,18 +1,16 @@
 defmodule Agora do
   @moduledoc """
-  Documentation for `Agora`.
+  Agora is a multi-agent runtime framework for Elixir.
+
+  It enables users to create collaborative AI agents using the BEAM actor model,
+  with provider abstraction, tool execution, middleware, and orchestration patterns.
   """
 
   @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Agora.hello()
-      :world
-
+  Returns the current version of Agora.
   """
-  def hello do
-    :world
+  @spec version() :: String.t()
+  def version do
+    Application.spec(:agora, :vsn) |> to_string()
   end
 end

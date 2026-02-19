@@ -1,8 +1,7 @@
 defmodule AgoraTest do
   use ExUnit.Case
-  doctest Agora
 
-  test "greets the world" do
-    assert Agora.hello() == :world
+  test "version/0 returns the application version" do
+    assert Agora.version() == "0.1.0"
   end
 end
