@@ -10,6 +10,7 @@
   <a href="#installation">Installation</a> |
   <a href="#quick-start">Quick Start</a> |
   <a href="#providers">Providers</a> |
+  <a href="#middleware">Middleware</a> |
   <a href="#architecture">Architecture</a> |
   <a href="docs/Design-v0.md">Design Doc</a> |
   <a href="TODO.md">Roadmap</a>
@@ -25,7 +26,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **Declarative agent config** -- Define agents with provider, model, instructions, tools, and middleware
 - **Structured errors** -- Typed `{:ok, result} | {:error, %Error{}}` tuples throughout (no exceptions for control flow)
 - **BEAM-native** -- Agents as supervised processes, tool execution via `Task.Supervisor`, per-run supervision trees
-- **Middleware system** -- Composable interceptors for logging, budgets, approval gates, and custom behavior (planned)
+- **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
 - **Orchestration patterns** -- Round-robin, supervisor, chat-room, and DAG workflow execution (planned)
 
 ## Installation
@@ -99,6 +100,27 @@ config = AgentConfig.new!(
 {:ok, pid} = Agent.start_link(config: config)
 {:ok, response} = Agent.run(pid, "What is 42 * 17?")
 # Agent calls Calculator tool, feeds result back to LLM, returns final answer
+```
+
+### Agent with middleware
+
+```elixir
+alias Agora.{AgentConfig, Agent}
+alias Agora.Middleware.{Logger, MaxTokens, Timeout}
+
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  instructions: "You are a helpful assistant.",
+  middleware: [
+    Logger,                              # logs each hook point
+    MaxTokens.new(max_tokens: 4000),     # halt if token estimate exceeds budget
+    Timeout.new(timeout_ms: 30_000)      # cooperative wall-clock timeout
+  ]
+)
+
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, response} = Agent.run(pid, "Hello!")
 ```
 
 ### Supervised agents
@@ -176,15 +198,69 @@ All providers implement the `Agora.Provider` behaviour:
 
 - **Anthropic** -- System messages extracted to top-level `system` parameter. Adjacent same-role messages merged automatically. Tool results sent as `user` role with `tool_result` content blocks.
 - **OpenAI** -- System messages stay inline. Tool arguments encoded/decoded as JSON strings. One Agora tool message with N results expands to N separate OpenAI `tool` messages.
-- **Echo** -- Six configurable modes for testing (`:echo`, `:fixed`, `:sequence`, `:error`, `:tool_call`, `:custom`). No HTTP calls.
+- **Echo** -- Six configurable modes for testing (`:echo`, `:fixed`, `:sequence`, `:error`, `:tool_call`, `:function`). No HTTP calls.
+
+## Middleware
+
+Middleware are composable interceptors that hook into the agent reasoning loop. They can be modules implementing `Agora.Middleware` or 2-arity closures returned by factory functions.
+
+### Hook points
+
+| Hook | When | Can modify |
+|------|------|------------|
+| `:before_provider_call` | Before LLM call | messages, config |
+| `:after_provider_call` | After LLM response | response, tool_calls (controls execution) |
+| `:before_tool_call` | Before tool execution | tool_calls (filter/approve) |
+| `:after_tool_call` | After tool execution | tool_results |
+
+### Built-in middleware
+
+| Module | Description |
+|--------|-------------|
+| `Agora.Middleware.Logger` | Logs events at each hook point via `Logger.debug` |
+| `Agora.Middleware.MaxTokens` | Halts if estimated token count exceeds a budget |
+| `Agora.Middleware.Timeout` | Cooperative wall-clock timeout across iterations |
+| `Agora.Middleware.ToolApproval` | Gates tool execution with an approval function |
+
+### Custom middleware
+
+```elixir
+# As a module
+defmodule MyMiddleware do
+  @behaviour Agora.Middleware
+
+  def call(%{hook: :before_provider_call} = ctx, next) do
+    # modify ctx, then continue
+    next.(ctx)
+  end
+
+  def call(ctx, next), do: next.(ctx)
+end
+
+# As a closure
+my_mw = fn ctx, next ->
+  if ctx.hook == :before_tool_call do
+    # inspect or filter tool_calls
+    next.(ctx)
+  else
+    next.(ctx)
+  end
+end
+```
 
 ## Architecture
 
 ```
 User → Agent.run/2 → reasoning loop:
+  [before_provider_call middleware]
   Provider.chat/3 → response
-    ├─ tool_calls? → ToolBroker.execute/2 → tool_results → loop
-    └─ text only?  → return {:ok, Message.t()}
+  [after_provider_call middleware]
+    ├─ tool_calls?
+    │   [before_tool_call middleware]
+    │   ToolBroker.execute/2 → tool_results
+    │   [after_tool_call middleware]
+    │   → loop
+    └─ text only? → return {:ok, Message.t()}
 ```
 
 ### Core modules
@@ -199,6 +275,8 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Error` | Typed errors: `:provider_error`, `:auth_error`, `:rate_limit`, `:timeout`, etc. |
 | `Agora.Tool` | Behaviour for defining tools + `FunctionTool` for inline definitions |
 | `Agora.ToolBroker` | Supervised parallel tool execution with timeout enforcement |
+| `Agora.Middleware` | Behaviour for composable interceptors at 4 hook points |
+| `Agora.Middleware.Chain` | Plug-style chain executor with error safety |
 | `Agora.Tool.Schema` | JSON Schema helpers for tool parameter validation |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
 
@@ -234,8 +312,8 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 1 | Provider Abstraction Layer | Complete |
 | 2 | Tool System | Complete |
 | 3 | Agent Runtime | Complete |
-| 4 | Middleware System | Next |
-| 5 | Orchestration | Planned |
+| 4 | Middleware System | Complete |
+| 5 | Orchestration | Next |
 | 6 | Memory System | Planned |
 | 7 | Observability | Planned |
 | 8 | Workflow Engine | Planned |

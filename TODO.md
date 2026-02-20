@@ -190,36 +190,61 @@ The core agent process with the default reasoning/action loop.
 
 ---
 
-## Phase 4: Middleware System
+## Phase 4: Middleware System ✅
 
 Cross-cutting concerns via composable interceptors — the primary extension mechanism.
 
 ### Middleware Behaviour
 
-- [ ] `Agora.Middleware` behaviour
-  - [ ] `@callback call(context, next) :: {:ok, context} | {:halt, reason}`
-  - [ ] Context struct: messages, current_response, tool_calls, config, metadata
-- [ ] `Agora.Middleware.Chain` — execute ordered list of middleware with `next` composition
+- [x] `Agora.Middleware` behaviour
+  - [x] `@callback call(context, next) :: {:ok, context} | {:halt, reason}`
+  - [x] Type `middleware :: module() | (Context.t(), next() -> ...)` — supports both module atoms and 2-arity closures
+- [x] `Agora.Middleware.Context` — struct threaded through chain with hook, messages, response, tool_calls, tool_results, config, metadata
+  - [x] Hook-specific field semantics (modifiable vs read-only per hook point)
+  - [x] Namespaced metadata (each middleware uses its module as key to prevent collisions)
+- [x] `Agora.Middleware.Chain` — Plug-style `next` chain executor
+  - [x] Empty list passthrough (zero overhead)
+  - [x] Module dispatch (`is_atom`) and closure dispatch (`is_function/2`)
+  - [x] Error safety: try/catch wraps each invocation; raise/throw/exit/bad-return/invalid-entry all convert to `{:halt, %Error{type: :middleware_error}}`
+  - [x] Return validation: only `{:ok, %Context{}}` and `{:halt, term()}` accepted
 
 ### Hook Points
 
-- [ ] `before_provider_call` — modify messages/config before LLM call
-- [ ] `after_provider_call` — inspect/modify provider response
-- [ ] `before_tool_call` — approve/block/modify tool execution
-- [ ] `after_tool_call` — inspect/modify tool results
+- [x] `before_provider_call` — modify messages/config before LLM call (config modifications scoped to current iteration only)
+- [x] `after_provider_call` — inspect/modify provider response and tool_calls
+- [x] `before_tool_call` — approve/block/filter tool calls; filtered calls sync with history (D14)
+- [x] `after_tool_call` — inspect/modify tool results before appending to history
 
 ### Built-in Middleware
 
-- [ ] `Agora.Middleware.Logger` — log provider calls, tool executions, loop iterations
-- [ ] `Agora.Middleware.MaxTokens` — enforce token budget across conversation
-- [ ] `Agora.Middleware.Timeout` — wall-clock timeout for entire agent run
-- [ ] `Agora.Middleware.ToolApproval` — gate tool calls on approval callback (human-in-the-loop)
+- [x] `Agora.Middleware.Logger` — module-based, logs events at each hook via `Logger.debug/1`
+- [x] `Agora.Middleware.MaxTokens` — `new(max_tokens: N)` factory; estimates tokens from content + tool_call args + tool_result content; active at `:before_provider_call` only
+- [x] `Agora.Middleware.Timeout` — `new(timeout_ms: N)` factory; cooperative wall-clock timeout; sets deadline on first invocation, checks on subsequent; active at all hooks; deadline persists via namespaced metadata
+- [x] `Agora.Middleware.ToolApproval` — `new(approve_fn: fn)` factory; approval function returns `:approve | {:reject, reason} | {:filter, calls}`; active at `:before_tool_call` only
 
 ### Integration
 
-- [ ] Wire middleware chain into Agent loop (before/after hooks at each step)
-- [ ] Tests for each built-in middleware
-- [ ] Test middleware ordering and halt propagation
+- [x] Wire middleware chain into Agent reasoning loop at 4 hook points
+  - [x] Fast path: `config.middleware == []` → skip all context/chain construction (zero overhead)
+  - [x] Middleware path: construct Context at each hook, run Chain, read back modified fields
+  - [x] `middleware_metadata` in GenServer state persists metadata across iterations within a run
+  - [x] Halt persistence (D11): on any halt, no new messages appended — `state.messages` unchanged
+  - [x] Tool call filtering sync (D14): if `before_tool_call` filters calls, assistant message reflects only approved calls
+  - [x] Config mutability (D7): `before_provider_call` can modify config for current iteration; not persisted to state
+  - [x] Telemetry invariants preserved: stop events emitted on middleware halts with error metadata
+- [x] `Agora.Error` — added `:middleware_error` type
+- [x] `Agora.AgentConfig` — updated middleware field docs to mention closures
+
+### Testing
+
+- [x] Context unit tests (middleware_test.exs)
+- [x] Chain tests (middleware/chain_test.exs): passthrough, ordering, halt, module/closure/mixed, error safety (raise/throw/exit/bad-return/invalid-entry/downstream-not-called)
+- [x] Logger tests (middleware/logger_test.exs): log output at each hook, passthrough
+- [x] MaxTokens tests (middleware/max_tokens_test.exs): under/over budget, custom chars_per_token, hook selectivity, tool data in estimate
+- [x] Timeout tests (middleware/timeout_test.exs): before/after deadline, deadline reuse, metadata persistence, all-hook coverage
+- [x] ToolApproval tests (middleware/tool_approval_test.exs): approve/reject/filter/empty-filter, hook selectivity
+- [x] Integration tests (middleware/integration_test.exs): Agent + each middleware, composition, halt at each hook, metadata persistence, config modification scope, empty middleware regression, error handling (raise/throw/exit), telemetry
+- [x] 336 total tests (64 new), 0 failures
 
 ---
 
@@ -427,6 +452,19 @@ Polish the public API surface, write documentation, build examples, and prepare 
 | Telemetry metadata | Sanitized (no config) | Only provider/model/agent_name/max_iterations emitted; `provider_opts` excluded to prevent API key leakage |
 | Crash history | Process dictionary tracking | `reasoning_loop` stores latest messages in process dictionary each iteration; catch block recovers partial history instead of losing it |
 | Memory | Behaviour + backends | Swappable storage; Buffer for dev, File for persistence, extensible to ETS/DB |
+| Middleware entries | Modules or 2-arity closures | Chain dispatches on `is_atom` vs `is_function/2`; closures enable parameterized middleware via factory functions |
+| Parameterized MW | Factory returns closure (`MaxTokens.new(opts)`) | Keeps behaviour at 2-arity; closures capture options naturally without complicating the interface |
+| Middleware chain | Plug-style `next` composition | Familiar to Elixir developers, composable, natural halt semantics; alternatives (pipeline, event) rejected |
+| Context hook field | 4 hook atoms | Middleware pattern-matches on `ctx.hook` to act at specific interception points |
+| Halt reason | `{:halt, term()}` conventionally `%Error{}` | Agent wraps non-Error reasons via `wrap_halt_reason/1` for uniformity |
+| Empty MW fast path | Skip context/chain when `config.middleware == []` | Zero overhead for agents without middleware; no Context struct allocation |
+| Config mutable per-iter | Agent reads back `ctx.config` after `before_provider_call` | Matches TODO spec; modifications scoped to current iteration — not persisted to GenServer state |
+| Metadata persistence | `state.middleware_metadata` carries metadata across loop iterations | Enables Timeout deadline to survive across iterations within a single `run/2` |
+| Namespaced metadata | Each middleware uses its module as key (`ctx.metadata[Agora.Middleware.Timeout]`) | Prevents collisions between middleware sharing the metadata map |
+| Chain error safety | try/catch wraps each invoke; invalid entries/crashes convert to `{:halt, %Error{type: :middleware_error}}` | Middleware bugs never crash the agent process — they produce typed, debuggable errors |
+| Timeout cooperative | Checks deadline at hook points only; no mid-flight interruption | Hard wall-clock enforcement requires Task wrapping — significantly more complex; cooperative catches multi-iteration accumulation |
+| Halt persistence | On halt, no new messages appended — `state.messages` unchanged | Clean rollback: halted iterations leave no trace in conversation history |
+| Tool call filter sync | If `before_tool_call` filters calls, assistant message reflects only approved calls | Prevents tool_calls/results divergence in conversation history |
 
 ---
 

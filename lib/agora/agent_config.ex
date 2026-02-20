@@ -12,7 +12,7 @@ defmodule Agora.AgentConfig do
     * `:instructions` - system prompt for the agent (default: `""`)
     * `:tools` - list of tool definitions (default: `[]`)
     * `:memory` - memory configuration keyword list (default: `nil`)
-    * `:middleware` - list of middleware modules (default: `[]`)
+    * `:middleware` - list of middleware modules or 2-arity functions (see `Agora.Middleware`) (default: `[]`)
     * `:max_iterations` - maximum reasoning loop iterations (default: `10`)
     * `:name` - human-readable agent name (default: `nil`)
     * `:provider_opts` - per-agent provider overrides (default: `[]`)
@@ -73,7 +73,7 @@ defmodule Agora.AgentConfig do
     middleware: [
       type: {:list, :any},
       default: [],
-      doc: "List of middleware modules"
+      doc: "List of middleware modules or 2-arity functions (see Agora.Middleware)"
     ],
     max_iterations: [
       type: :pos_integer,

@@ -15,6 +15,7 @@ defmodule Agora.Error do
           | :auth_error
           | :config_error
           | :iteration_limit
+          | :middleware_error
           | :unknown
 
   @type t :: %__MODULE__{
@@ -32,6 +33,7 @@ defmodule Agora.Error do
     :auth_error,
     :config_error,
     :iteration_limit,
+    :middleware_error,
     :unknown
   ]
 
