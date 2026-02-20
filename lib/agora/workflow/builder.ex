@@ -9,18 +9,39 @@ defmodule Agora.Workflow.Builder do
 
       alias Agora.Workflow.Builder
 
+      # Linear pipeline with chain/2
+      workflow =
+        Builder.new(step_defaults: [retry: 1])
+        |> Builder.chain([
+          {:fetch, &fetch_data/1},
+          {:transform, &transform/1},
+          {:load, &load/1, timeout: 5_000}
+        ])
+        |> Builder.build!()
+
+      # Dependency declaration with after:
       workflow =
         Builder.new()
         |> Builder.step(:fetch, &fetch_data/1)
-        |> Builder.step(:transform, &transform/1, inputs: [:fetch])
-        |> Builder.step(:load, &load/1, inputs: [:transform])
+        |> Builder.step(:transform, &transform/1, after: :fetch)
+        |> Builder.step(:load, &load/1, after: :transform)
+        |> Builder.build!()
+
+      # Inline conditional edge with condition:
+      workflow =
+        Builder.new()
+        |> Builder.step(:check, &check_status/1)
+        |> Builder.step(:notify, &send_alert/1,
+          after: :check,
+          condition: fn r -> elem(r[:check], 1) == :critical end
+        )
         |> Builder.build!()
 
   ## Auto-Edge Generation
 
-  Steps that declare `inputs: [:a, :b]` automatically generate edges
-  `a -> step` and `b -> step` at build time, unless an explicit edge
-  for that pair already exists. Explicit edges take precedence.
+  Steps that declare `inputs: [:a, :b]` (or `after: [:a, :b]`) automatically
+  generate edges `a -> step` and `b -> step` at build time, unless an explicit
+  edge for that pair already exists. Explicit edges take precedence.
 
   """
 
@@ -79,6 +100,12 @@ defmodule Agora.Workflow.Builder do
 
     * `:name` — human-readable name
     * `:inputs` — list of upstream step IDs (auto-generates edges)
+    * `:after` — alias for `:inputs`. Accepts a single atom or list of atoms.
+      Mutually exclusive with `:inputs`.
+    * `:condition` — 1-arity function `(map() -> boolean())` for inline conditional
+      edges. Requires exactly one dependency via `:after` or `:inputs`. For multiple
+      dependencies, use `edge/4` instead.
+    * `:when` — alias for `:condition`
     * `:outputs` — optional schema map (documentation only)
     * `:input_mapper` — `(map() -> String.t() | Message.t())` for AgentConfig handlers
     * `:timeout` — step timeout in ms (default: 300_000)

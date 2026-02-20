@@ -486,15 +486,25 @@ Workflows define deterministic DAG-based pipelines where execution order is pred
 ```elixir
 alias Agora.Workflow.Builder
 
+# Linear pipeline with chain/2
 workflow =
-  Builder.new()
-  |> Builder.step(:fetch, fn _r -> {:ok, fetch_data()} end)
-  |> Builder.step(:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end)
-  |> Builder.step(:save, fn r -> {:ok, save(elem(r[:transform], 1))} end)
-  |> Builder.sequence([:fetch, :transform, :save])
+  Builder.new(step_defaults: [retry: 1])
+  |> Builder.chain([
+    {:fetch, fn _r -> {:ok, fetch_data()} end},
+    {:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end},
+    {:save, fn r -> {:ok, save(elem(r[:transform], 1))} end}
+  ])
   |> Builder.build!()
 
 {:ok, results} = Agora.run_workflow(workflow, input: "source")
+
+# Or use after: for dependency declaration
+workflow =
+  Builder.new()
+  |> Builder.step(:fetch, fn _r -> {:ok, fetch_data()} end)
+  |> Builder.step(:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end, after: :fetch)
+  |> Builder.step(:save, fn r -> {:ok, save(elem(r[:transform], 1))} end, after: :transform)
+  |> Builder.build!()
 ```
 
 ### Parallel fan-out/fan-in
@@ -503,12 +513,11 @@ workflow =
 workflow =
   Builder.new()
   |> Builder.step(:source, fn _r -> {:ok, data} end)
-  |> Builder.step(:analyze, fn r -> {:ok, analyze(elem(r[:source], 1))} end)
-  |> Builder.step(:summarize, fn r -> {:ok, summarize(elem(r[:source], 1))} end)
+  |> Builder.step(:analyze, fn r -> {:ok, analyze(elem(r[:source], 1))} end, after: :source)
+  |> Builder.step(:summarize, fn r -> {:ok, summarize(elem(r[:source], 1))} end, after: :source)
   |> Builder.step(:combine, fn r ->
     {:ok, merge(elem(r[:analyze], 1), elem(r[:summarize], 1))}
-  end)
-  |> Builder.parallel([:analyze, :summarize], from: :source, to: :combine)
+  end, after: [:analyze, :summarize])
   |> Builder.build!()
 ```
 
@@ -518,10 +527,10 @@ workflow =
 workflow =
   Builder.new()
   |> Builder.step(:check, fn r -> {:ok, r[:input]} end)
-  |> Builder.step(:path_a, fn _r -> {:ok, "took path A"} end)
-  |> Builder.step(:path_b, fn _r -> {:ok, "took path B"} end)
-  |> Builder.edge(:check, :path_a, condition: fn r -> elem(r[:check], 1) == "go_a" end)
-  |> Builder.edge(:check, :path_b, condition: fn r -> elem(r[:check], 1) == "go_b" end)
+  |> Builder.step(:path_a, fn _r -> {:ok, "took path A"} end,
+    after: :check, condition: fn r -> elem(r[:check], 1) == "go_a" end)
+  |> Builder.step(:path_b, fn _r -> {:ok, "took path B"} end,
+    after: :check, condition: fn r -> elem(r[:check], 1) == "go_b" end)
   |> Builder.build!()
 ```
 
@@ -535,8 +544,8 @@ config = AgentConfig.new!(provider: :anthropic, model: "claude-sonnet-4-20250514
 workflow =
   Builder.new()
   |> Builder.step(:data, fn _r -> {:ok, fetch_data()} end)
-  |> Builder.step(:agent, config, input_mapper: fn r -> "Analyze: #{elem(r[:data], 1)}" end)
-  |> Builder.sequence([:data, :agent])
+  |> Builder.step(:agent, config,
+    after: :data, input_mapper: fn r -> "Analyze: #{elem(r[:data], 1)}" end)
   |> Builder.build!()
 ```
 
@@ -554,10 +563,14 @@ Resume workflows from where they left off using checkpoint stores:
 
 | Feature | Description |
 |---------|-------------|
+| `step_defaults` | Set workflow-wide `:timeout` and `:retry` via `Builder.new/1` |
+| `after:` | Alias for `inputs:` — declare dependencies inline on steps |
+| `chain/2` | Define and wire steps in a single linear pipeline call |
+| `condition:`/`when:` | Inline conditional edges on single-dependency steps |
 | Retry | Per-step retry count with crash recovery (`retry: 3`) |
 | Timeout | Per-step deadline-based timeout (`timeout: 30_000`) |
 | Failure modes | `:abort` (default) fails fast; `:skip` continues past failures |
-| Auto-edges | Declare `inputs: [:a, :b]` on a step to auto-generate dependency edges |
+| Auto-edges | Declare `inputs: [:a, :b]` or `after: [:a, :b]` to auto-generate edges |
 | Determinism | Steps within each topological level are sorted before execution |
 
 ## Observability

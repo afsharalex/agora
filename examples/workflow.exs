@@ -9,7 +9,7 @@ alias Agora.Workflow.Builder
 
 IO.puts("=== Workflow Example (Parallel Fan-Out) ===\n")
 
-# Build a workflow with parallel steps
+# Build a workflow with parallel steps using after: for dependency declaration
 workflow =
   Builder.new()
   |> Builder.step(:fetch_users, fn _results ->
@@ -21,22 +21,20 @@ workflow =
     count = length(users)
     IO.puts("[count_users] Found #{count} users")
     {:ok, count}
-  end)
+  end, after: :fetch_users)
   |> Builder.step(:format_names, fn results ->
     {:ok, users} = results[:fetch_users]
     formatted = Enum.map_join(users, ", ", &String.upcase/1)
     IO.puts("[format_names] Formatted: #{formatted}")
     {:ok, formatted}
-  end)
+  end, after: :fetch_users)
   |> Builder.step(:summary, fn results ->
     {:ok, count} = results[:count_users]
     {:ok, names} = results[:format_names]
     summary = "#{count} users: #{names}"
     IO.puts("[summary] #{summary}")
     {:ok, summary}
-  end)
-  # :count_users and :format_names run in parallel after :fetch_users
-  |> Builder.parallel([:count_users, :format_names], from: :fetch_users, to: :summary)
+  end, after: [:count_users, :format_names])
   |> Builder.build!()
 
 IO.puts("Workflow built. Executing...\n")
