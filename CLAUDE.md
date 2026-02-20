@@ -65,4 +65,4 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–4 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System) are complete. Next up: Phase 5 (Orchestration) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–5 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration) are complete. Next up: Phase 6 (Memory System) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.

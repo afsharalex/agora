@@ -11,6 +11,7 @@
   <a href="#quick-start">Quick Start</a> |
   <a href="#providers">Providers</a> |
   <a href="#middleware">Middleware</a> |
+  <a href="#orchestration">Orchestration</a> |
   <a href="#architecture">Architecture</a> |
   <a href="docs/Design-v0.md">Design Doc</a> |
   <a href="TODO.md">Roadmap</a>
@@ -27,7 +28,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **Structured errors** -- Typed `{:ok, result} | {:error, %Error{}}` tuples throughout (no exceptions for control flow)
 - **BEAM-native** -- Agents as supervised processes, tool execution via `Task.Supervisor`, per-run supervision trees
 - **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
-- **Orchestration patterns** -- Round-robin, supervisor, chat-room, and DAG workflow execution (planned)
+- **Orchestration patterns** -- Single, round-robin, supervisor delegation, and chat-room multi-agent coordination
 
 ## Installation
 
@@ -248,6 +249,58 @@ my_mw = fn ctx, next ->
 end
 ```
 
+## Orchestration
+
+Orchestrators coordinate multiple agents without modifying how agents work internally.
+
+### Multi-agent coordination
+
+```elixir
+alias Agora.{AgentConfig, Orchestrator.Runner, Orchestrator.TerminationCondition}
+
+# Define agent configs
+agents = %{
+  researcher: AgentConfig.new!(
+    provider: :anthropic, model: "claude-sonnet-4-20250514",
+    instructions: "You are a research assistant."
+  ),
+  writer: AgentConfig.new!(
+    provider: :anthropic, model: "claude-sonnet-4-20250514",
+    instructions: "You are a technical writer."
+  )
+}
+
+# Round-robin: agents take turns, each receiving the previous response
+{:ok, pid} = Runner.start_link(
+  orchestrator: Agora.Orchestrator.RoundRobin,
+  agents: agents,
+  termination: TerminationCondition.keyword_match(["FINAL ANSWER"])
+)
+
+{:ok, response} = Runner.run(pid, "Research and write about BEAM concurrency")
+```
+
+### Built-in orchestrators
+
+| Orchestrator | Description |
+|-------------|-------------|
+| `Agora.Orchestrator.Single` | Runs one agent to completion (baseline) |
+| `Agora.Orchestrator.RoundRobin` | Cycles through agents, each receives previous response |
+| `Agora.Orchestrator.Supervisor` | One agent delegates to workers via `DELEGATE:name:message` |
+| `Agora.Orchestrator.ChatRoom` | Shared transcript — all agents see the full conversation |
+
+### Termination conditions
+
+```elixir
+alias Agora.Orchestrator.TerminationCondition
+
+# Composable conditions
+condition = TerminationCondition.any_of([
+  TerminationCondition.max_turns(10),
+  TerminationCondition.keyword_match(["DONE", "FINAL"])
+])
+```
+
 ## Architecture
 
 ```
@@ -278,6 +331,9 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Middleware` | Behaviour for composable interceptors at 4 hook points |
 | `Agora.Middleware.Chain` | Plug-style chain executor with error safety |
 | `Agora.Tool.Schema` | JSON Schema helpers for tool parameter validation |
+| `Agora.Orchestrator` | Behaviour for multi-agent orchestration strategies |
+| `Agora.Orchestrator.Runner` | GenServer driving orchestration loops with crash protection |
+| `Agora.Orchestrator.TerminationCondition` | Composable conditions (closures) for stopping orchestration |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
 
 ### Config resolution order
@@ -313,8 +369,8 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 2 | Tool System | Complete |
 | 3 | Agent Runtime | Complete |
 | 4 | Middleware System | Complete |
-| 5 | Orchestration | Next |
-| 6 | Memory System | Planned |
+| 5 | Orchestration | Complete |
+| 6 | Memory System | Next |
 | 7 | Observability | Planned |
 | 8 | Workflow Engine | Planned |
 | 9 | Streaming Support | Planned |

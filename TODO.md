@@ -254,30 +254,60 @@ Multi-agent coordination patterns — orchestrators control *which* agent runs, 
 
 ### Orchestrator Behaviour
 
-- [ ] `Agora.Orchestrator` behaviour
-  - [ ] `@callback init(config) :: {:ok, state}`
-  - [ ] `@callback next(state, messages) :: {:agent, agent_ref, state} | {:done, result, state}`
-  - [ ] `@callback handle_result(state, agent_ref, result) :: {:continue, state} | {:done, result, state}`
-- [ ] `Agora.Orchestrator.Runner` — GenServer that drives the orchestrator loop
+- [x] `Agora.Orchestrator` behaviour
+  - [x] `@callback init(config :: map()) :: {:ok, state} | {:error, Error.t()}`
+  - [x] `@callback next(state, context) :: {:next, agent_name, input_msg, state} | {:done, result, state}`
+  - [x] `@callback handle_result(state, agent_name, result) :: {:continue, state} | {:done, result, state} | {:error, Error.t(), state}`
+  - [x] `context` is `%{original_input: Message.t(), history: [turn()]}` where `turn()` = `%{agent: atom(), input: Message.t(), output: result}`
+  - [x] Agent names are `atom()` — Runner resolves to PIDs internally
+- [x] `Agora.Orchestrator.Runner` — GenServer that drives the orchestrator loop
+  - [x] Mirrors Agent pattern: synchronous `run/2`, `:temporary` restart
+  - [x] Starts agents via `Agora.Agent.Supervisor.start_agent/2` (supervised, not linked)
+  - [x] Re-initializes orchestrator state and clears history per `run/2` (agent processes persist)
+  - [x] Crash protection via try/catch → `{:error, %Error{type: :orchestration_error}}`
+  - [x] Hard safety limit `max_turns` (default 100) separate from termination conditions
+- [x] `Agora.Orchestrator.RunnerSupervisor` — DynamicSupervisor for Runner processes
 
 ### Termination Conditions
 
-- [ ] `Agora.Orchestrator.TerminationCondition` behaviour
-  - [ ] `max_iterations/1`, `keyword_match/1`, `custom/1`
-- [ ] Composable conditions (any_of, all_of)
+- [x] `Agora.Orchestrator.TerminationCondition` — composable closures (not behaviour)
+  - [x] `max_turns/1` — checks `length(context.history) >= n`
+  - [x] `keyword_match/1` — case-insensitive match on last response content
+  - [x] `custom/1` — passthrough for arbitrary functions
+  - [x] `any_of/1`, `all_of/1` — composition
 
 ### Built-in Orchestrators
 
-- [ ] `Agora.Orchestrator.Single` — run one agent to completion (baseline)
-- [ ] `Agora.Orchestrator.RoundRobin` — cycle through agents in order
-- [ ] `Agora.Orchestrator.Supervisor` — one agent delegates to others
-- [ ] `Agora.Orchestrator.ChatRoom` — all agents see shared context, take turns
+- [x] `Agora.Orchestrator.Single` — run one agent to completion (baseline)
+- [x] `Agora.Orchestrator.RoundRobin` — cycle through agents in order, each receives previous response
+- [x] `Agora.Orchestrator.Supervisor` — response-based delegation with safe parser (never `String.to_atom` on model output)
+- [x] `Agora.Orchestrator.ChatRoom` — shared transcript, configurable `:max_transcript_messages` cap
+
+### Design Decisions
+
+- D1: `next/2` returns `{:next, agent_name, input_msg, state}` — orchestrators control routing input
+- D2: Agent refs are `atom()` names — pattern-matchable, Runner resolves to PIDs
+- D3: Context is `%{original_input, history}` — richer than raw messages
+- D4: Termination conditions are closures — composable with `any_of/all_of`, matches middleware pattern
+- D5: Agents started via existing `Agora.Agent.Supervisor` — supervised, not linked to Runner
+- D6: Supervisor delegation parser validates against known worker name map — atom safety
+- D7: ChatRoom sends full transcript; configurable `:max_transcript_messages` bounds O(n^2) growth
+- D8: Runner crash protection via try/catch — matches Agent pattern
+- D9: `max_turns` (default 100) is hard safety limit, separate from business-logic termination
+- D10: Run scope — orchestrator state re-initialized per `run/2`, agent processes persist
+- D11: Strategy = `Agora.Orchestrator.Supervisor`, DynamicSupervisor = `Agora.Orchestrator.RunnerSupervisor`
+- D12: All orchestrators use `msg.content || ""` for nil-safe routing
+- D13: Init failure cleanup — Runner stops already-started agents on partial init failure
+- D14: Telemetry uses `:step` events to align with Phase 7 roadmap
 
 ### Testing
 
-- [ ] Test each orchestrator with Echo-backed agents
-- [ ] Test termination conditions
-- [ ] Test message routing between agents
+- [x] Termination condition tests (max_turns, keyword_match, custom, any_of, all_of)
+- [x] Orchestrator unit tests (Single, RoundRobin, Supervisor, ChatRoom)
+- [x] Runner tests with Echo-backed agents (lifecycle, run, crash protection, telemetry)
+- [x] Integration tests (tools within orchestration, convenience functions)
+- [x] `Agora.Error` — added `:orchestration_error` type
+- [x] 462 total tests (121 new), 0 failures
 
 ---
 
@@ -518,13 +548,14 @@ lib/agora/
 │   ├── timeout.ex                     # Phase 4
 │   └── tool_approval.ex               # Phase 4
 │
+├── orchestrator.ex                      # Phase 5 (behaviour)
 ├── orchestrator/
-│   ├── orchestrator.ex                # Phase 5 (behaviour)
 │   ├── runner.ex                      # Phase 5
+│   ├── runner_supervisor.ex           # Phase 5
 │   ├── termination_condition.ex       # Phase 5
 │   ├── single.ex                      # Phase 5
 │   ├── round_robin.ex                 # Phase 5
-│   ├── supervisor_orchestrator.ex     # Phase 5
+│   ├── supervisor.ex                  # Phase 5 (delegation strategy)
 │   └── chat_room.ex                   # Phase 5
 │
 ├── memory/
