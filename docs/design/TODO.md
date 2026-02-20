@@ -13,16 +13,16 @@ Task breakdown for all phases of the Workflow DSL.
 
 Prerequisite for all other changes. Refactor existing edge-appending code to use a shared private helper with `{from, to}` duplicate detection.
 
-- [ ] **1.1** Add `add_edge/2` and `edge_exists?/3` private functions to Builder
-- [ ] **1.2** Refactor `edge/4` to use `add_edge/2` instead of direct append
-- [ ] **1.3** Refactor `sequence/2` reduce to use `add_edge/2`
-- [ ] **1.4** Refactor `parallel/3` (`build_fan_edges/4`) to use `add_edge/2`
-- [ ] **1.5** Refactor `merge_input_edges/1` to use `add_edge/2` (keep MapSet pre-filter as fast path)
-- [ ] **1.6** Tests: duplicate edge via `edge/4` → error
-- [ ] **1.7** Tests: duplicate edge via `sequence/2` → error
-- [ ] **1.8** Tests: duplicate edge via `parallel/3` → error
-- [ ] **1.9** Tests: duplicate `{from, to}` with different conditions → error
-- [ ] **1.10** Tests: all existing Builder tests still pass (backward compat)
+- [x] **1.1** Add `add_edge/2` and `edge_exists?/3` private functions to Builder
+- [x] **1.2** Refactor `edge/4` to use `add_edge/2` instead of direct append
+- [x] **1.3** Refactor `sequence/2` reduce to use `add_edge/2`
+- [x] **1.4** Refactor `parallel/3` (`build_fan_edges/4`) to use `add_edge/2`
+- [x] **1.5** Refactor `merge_input_edges/1` to use `add_edge/2` (keep MapSet pre-filter as fast path)
+- [x] **1.6** Tests: duplicate edge via `edge/4` → error
+- [x] **1.7** Tests: duplicate edge via `sequence/2` → error
+- [x] **1.8** Tests: duplicate edge via `parallel/3` → error
+- [x] **1.9** Tests: duplicate `{from, to}` with different conditions → error
+- [x] **1.10** Tests: all existing Builder tests still pass (backward compat)
 
 ### 2. Duplicate step ID detection
 
