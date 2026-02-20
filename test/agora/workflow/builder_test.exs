@@ -419,6 +419,21 @@ defmodule Agora.Workflow.BuilderTest do
       assert error.message =~ "keyword list"
     end
 
+    test "non-keyword list step_defaults produces error" do
+      builder = Builder.new(step_defaults: [1, 2, 3])
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "keyword list"
+    end
+
+    test "duplicate allowed keys do not false-positive" do
+      builder =
+        Builder.new(step_defaults: [timeout: 30_000, timeout: 10_000])
+        |> Builder.step(:a, &handler/1)
+
+      # Last value wins in keyword merge, but validation should not reject
+      assert {:ok, _} = Builder.build(builder)
+    end
+
     test "defaults applied when step has no overrides" do
       builder =
         Builder.new(step_defaults: [timeout: 10_000, retry: 3])
@@ -599,6 +614,28 @@ defmodule Agora.Workflow.BuilderTest do
       assert error.message =~ "multiple dependencies"
     end
 
+    test "condition: false is rejected, not silently treated as nil" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: :a, condition: false)
+
+      # condition: false should produce a validation error via Edge.new,
+      # not silently become an unconditional edge
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "1-arity function"
+    end
+
+    test "inputs: :atom (non-list) with condition: produces error not crash" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, inputs: :a, condition: fn _r -> true end)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "requires a single :after or :inputs"
+    end
+
     test "conditional edge suppresses auto-edge for same pair" do
       cond_fn = fn _r -> true end
 
@@ -695,9 +732,22 @@ defmodule Agora.Workflow.BuilderTest do
       builder =
         Builder.new()
         |> Builder.chain([{:a, &handler/1}, {:b, &handler/1}])
-        |> Builder.sequence([:a, :b])
+        |> Builder.chain([{:b2, &handler/1, name: "b2"}, {:c, &handler/1}])
+        |> Builder.sequence([:b, :b2])
 
-      assert {:error, error} = Builder.build(builder)
+      # chain 1 creates a->b, chain 2 creates b2->c, sequence creates b->b2
+      # All unique — no error
+      assert {:ok, _} = Builder.build(builder)
+
+      # Now test actual overlap: two chains that share an adjacency edge
+      builder2 =
+        Builder.new()
+        |> Builder.chain([{:x, &handler/1}, {:y, &handler/1}])
+        |> Builder.chain([{:y2, &handler/1}, {:z, &handler/1}])
+        |> Builder.sequence([:x, :y])
+
+      # chain 1 already created x->y, sequence duplicates it
+      assert {:error, error} = Builder.build(builder2)
       assert error.message =~ "already exists"
     end
 
@@ -705,6 +755,12 @@ defmodule Agora.Workflow.BuilderTest do
       builder = Builder.new() |> Builder.chain([{:a}])
       assert {:error, error} = Builder.build(builder)
       assert error.message =~ "expects {id, handler}"
+    end
+
+    test "non-keyword list opts in chain tuple produces error not crash" do
+      builder = Builder.new() |> Builder.chain([{:a, &handler/1, [1, 2]}])
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "keyword list"
     end
   end
 

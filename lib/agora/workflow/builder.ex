@@ -238,15 +238,23 @@ defmodule Agora.Workflow.Builder do
        )}
 
   defp validate_no_wiring_keys(opts) do
-    found = Keyword.keys(opts) |> Enum.filter(&(&1 in @wiring_keys))
+    if Keyword.keyword?(opts) do
+      found = Keyword.keys(opts) |> Enum.filter(&(&1 in @wiring_keys))
 
-    if found == [] do
-      :ok
+      if found == [] do
+        :ok
+      else
+        {:error,
+         Error.new(
+           :workflow_error,
+           "chain/2 does not accept wiring options (#{inspect(found)})"
+         )}
+      end
     else
       {:error,
        Error.new(
          :workflow_error,
-         "chain/2 does not accept wiring options (#{inspect(found)})"
+         "chain/2 expects step opts to be a keyword list, got: #{inspect(opts)}"
        )}
     end
   end
@@ -336,10 +344,19 @@ defmodule Agora.Workflow.Builder do
   defp extract_condition(opts, false), do: {:ok, opts, nil}
 
   defp extract_condition(opts, true) do
-    condition_fn = opts[:condition] || opts[:when]
+    condition_fn =
+      if Keyword.has_key?(opts, :condition), do: opts[:condition], else: opts[:when]
+
     inputs = opts[:inputs] || []
 
     cond do
+      not is_list(inputs) ->
+        {:error,
+         Error.new(
+           :workflow_error,
+           ":condition/:when requires a single :after or :inputs dependency"
+         )}
+
       inputs == [] ->
         {:error,
          Error.new(
@@ -371,16 +388,22 @@ defmodule Agora.Workflow.Builder do
   end
 
   defp validate_step_defaults(defaults) when is_list(defaults) do
-    invalid = Keyword.keys(defaults) -- @allowed_step_defaults
+    if Keyword.keyword?(defaults) do
+      unique_keys = defaults |> Keyword.keys() |> MapSet.new()
+      allowed = MapSet.new(@allowed_step_defaults)
+      invalid = MapSet.difference(unique_keys, allowed) |> MapSet.to_list()
 
-    if invalid == [] do
-      :ok
+      if invalid == [] do
+        :ok
+      else
+        {:error,
+         Error.new(
+           :workflow_error,
+           "step_defaults only accepts :timeout and :retry, got: #{inspect(invalid)}"
+         )}
+      end
     else
-      {:error,
-       Error.new(
-         :workflow_error,
-         "step_defaults only accepts :timeout and :retry, got: #{inspect(invalid)}"
-       )}
+      {:error, Error.new(:workflow_error, "step_defaults must be a keyword list")}
     end
   end
 
