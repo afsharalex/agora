@@ -51,4 +51,15 @@ defmodule Agora do
   def stop_runner(pid) when is_pid(pid) do
     Agora.Orchestrator.RunnerSupervisor.stop_runner(pid)
   end
+
+  @doc """
+  Executes a workflow DAG.
+
+  See `Agora.Workflow.Executor.run/2` for options.
+  """
+  @spec run_workflow(Agora.Workflow.t(), keyword()) ::
+          {:ok, map()} | {:error, Agora.Error.t()}
+  def run_workflow(%Agora.Workflow{} = workflow, opts \\ []) do
+    Agora.Workflow.Executor.run(workflow, opts)
+  end
 end

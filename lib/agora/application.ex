@@ -10,6 +10,7 @@ defmodule Agora.Application do
     children = [
       {Registry, keys: :duplicate, name: Agora.EventBus.Registry},
       {Task.Supervisor, name: Agora.ToolSupervisor},
+      {Task.Supervisor, name: Agora.WorkflowTaskSupervisor},
       Agora.Agent.Supervisor,
       Agora.Orchestrator.RunnerSupervisor
     ]

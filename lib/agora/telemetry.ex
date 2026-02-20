@@ -3,8 +3,8 @@ defmodule Agora.Telemetry do
   Telemetry helpers and canonical event documentation for the Agora framework.
 
   This module provides thin wrappers around `:telemetry` functions and serves
-  as the single reference for all telemetry events emitted by Agora (17 events
-  across 7 event prefixes).
+  as the single reference for all telemetry events emitted by Agora (23 events
+  across 9 event prefixes).
 
   ## Event Reference
 
@@ -69,6 +69,19 @@ defmodule Agora.Telemetry do
   | `[:agora, :orchestrator, :run, :stop]` | `%{duration, steps}` | `%{orchestrator, name, steps}` + optional `:error` |
   | `[:agora, :orchestrator, :step, :start]` | `%{system_time}` | `%{orchestrator, agent, step}` |
   | `[:agora, :orchestrator, :step, :stop]` | `%{duration}` | `%{orchestrator, agent, step}` |
+
+  ### Workflow Events
+
+  Emitted by `Agora.Workflow.Executor` using `span/3`.
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:agora, :workflow, :run, :start]` | `%{monotonic_time, system_time}` | `%{workflow_id, step_count}` |
+  | `[:agora, :workflow, :run, :stop]` | `%{duration, monotonic_time}` | `%{workflow_id, step_count}` + optional `:error` |
+  | `[:agora, :workflow, :run, :exception]` | `%{duration, monotonic_time}` | `%{workflow_id, step_count, kind, reason, stacktrace}` |
+  | `[:agora, :workflow, :step, :start]` | `%{monotonic_time, system_time}` | `%{step_id, step_name}` |
+  | `[:agora, :workflow, :step, :stop]` | `%{duration, monotonic_time}` | `%{step_id, step_name}` + optional `:error` |
+  | `[:agora, :workflow, :step, :exception]` | `%{duration, monotonic_time}` | `%{step_id, step_name, kind, reason, stacktrace}` |
   """
 
   @doc """

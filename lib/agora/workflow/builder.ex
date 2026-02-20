@@ -1,0 +1,310 @@
+defmodule Agora.Workflow.Builder do
+  @moduledoc """
+  DSL builder for constructing workflow DAGs.
+
+  Provides a pipeline-friendly API for defining steps and edges, with
+  validation at build time (cycle detection, endpoint verification).
+
+  ## Example
+
+      alias Agora.Workflow.Builder
+
+      workflow =
+        Builder.new()
+        |> Builder.step(:fetch, &fetch_data/1)
+        |> Builder.step(:transform, &transform/1, inputs: [:fetch])
+        |> Builder.step(:load, &load/1, inputs: [:transform])
+        |> Builder.build!()
+
+  ## Auto-Edge Generation
+
+  Steps that declare `inputs: [:a, :b]` automatically generate edges
+  `a -> step` and `b -> step` at build time, unless an explicit edge
+  for that pair already exists. Explicit edges take precedence.
+
+  """
+
+  alias Agora.{Error, Workflow}
+  alias Agora.Workflow.{Edge, Step}
+
+  @type t :: %__MODULE__{
+          steps: %{atom() => Step.t()},
+          edges: [Edge.t()],
+          errors: [Error.t()]
+        }
+
+  defstruct steps: %{}, edges: [], errors: []
+
+  @doc """
+  Creates a new empty builder.
+  """
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @doc """
+  Adds a step to the builder.
+
+  ## Options
+
+    * `:name` — human-readable name
+    * `:inputs` — list of upstream step IDs (auto-generates edges)
+    * `:outputs` — optional schema map (documentation only)
+    * `:input_mapper` — `(map() -> String.t() | Message.t())` for AgentConfig handlers
+    * `:timeout` — step timeout in ms (default: 300_000)
+    * `:retry` — retry count (default: 0)
+
+  """
+  @spec step(t(), atom(), Step.handler(), keyword()) :: t()
+  def step(%__MODULE__{} = builder, id, handler, opts \\ []) do
+    case Step.new(Keyword.merge(opts, id: id, handler: handler)) do
+      {:ok, step} ->
+        %{builder | steps: Map.put(builder.steps, id, step)}
+
+      {:error, error} ->
+        %{builder | errors: [error | builder.errors]}
+    end
+  end
+
+  @doc """
+  Adds an explicit edge to the builder.
+
+  ## Options
+
+    * `:condition` — optional 1-arity function `(map() -> boolean())`
+
+  """
+  @spec edge(t(), atom(), atom(), keyword()) :: t()
+  def edge(%__MODULE__{} = builder, from, to, opts \\ []) do
+    case Edge.new(Keyword.merge(opts, from: from, to: to)) do
+      {:ok, edge} ->
+        %{builder | edges: builder.edges ++ [edge]}
+
+      {:error, error} ->
+        %{builder | errors: [error | builder.errors]}
+    end
+  end
+
+  @doc """
+  Chains a list of step IDs into a linear sequence of edges.
+
+  Given `[:a, :b, :c]`, adds edges `a -> b` and `b -> c`.
+  """
+  @spec sequence(t(), [atom()]) :: t()
+  def sequence(%__MODULE__{} = builder, step_ids) when is_list(step_ids) do
+    pairs = Enum.chunk_every(step_ids, 2, 1, :discard)
+
+    Enum.reduce(pairs, builder, fn [from, to], acc ->
+      case Edge.new(from: from, to: to) do
+        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:error, error} -> %{acc | errors: [error | acc.errors]}
+      end
+    end)
+  end
+
+  @doc """
+  Creates fan-out and/or fan-in edges for parallel execution.
+
+  ## Options
+
+    * `:from` — source step ID. Adds an edge from this step to each step in the list.
+    * `:to` — sink step ID. Adds an edge from each step in the list to this step.
+
+  At least one of `:from` or `:to` is required.
+
+  ## Example
+
+      builder
+      |> Builder.parallel([:b, :c, :d], from: :a, to: :e)
+      # Creates edges: a->b, a->c, a->d, b->e, c->e, d->e
+
+  """
+  @spec parallel(t(), [atom()], keyword()) :: t()
+  def parallel(%__MODULE__{} = builder, step_ids, opts) when is_list(step_ids) do
+    from = opts[:from]
+    to = opts[:to]
+
+    if is_nil(from) and is_nil(to) do
+      error = Error.new(:workflow_error, "parallel/3 requires at least one of :from or :to")
+      %{builder | errors: [error | builder.errors]}
+    else
+      builder = build_fan_edges(builder, step_ids, from, :fan_out)
+      build_fan_edges(builder, step_ids, to, :fan_in)
+    end
+  end
+
+  defp build_fan_edges(builder, _step_ids, nil, _direction), do: builder
+
+  defp build_fan_edges(builder, step_ids, target, direction) do
+    Enum.reduce(step_ids, builder, fn id, acc ->
+      {from, to} =
+        case direction do
+          :fan_out -> {target, id}
+          :fan_in -> {id, target}
+        end
+
+      case Edge.new(from: from, to: to) do
+        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:error, error} -> %{acc | errors: [error | acc.errors]}
+      end
+    end)
+  end
+
+  @doc """
+  Validates the builder state and returns a `%Workflow{}`.
+
+  Performs:
+  1. Auto-edge generation from step `inputs` declarations
+  2. All edge endpoints reference known step IDs
+  3. All `inputs` references point to known step IDs
+  4. No cycles (Kahn's algorithm)
+
+  Returns `{:ok, %Workflow{}}` or `{:error, %Error{}}`.
+  """
+  @spec build(t()) :: {:ok, Workflow.t()} | {:error, Error.t()}
+  def build(%__MODULE__{} = builder) do
+    with :ok <- check_errors(builder) do
+      builder = merge_input_edges(builder)
+
+      with :ok <- check_errors(builder),
+           :ok <- validate_edge_endpoints(builder),
+           :ok <- validate_input_refs(builder),
+           :ok <- validate_no_cycles(builder) do
+        {:ok,
+         %Workflow{
+           steps: builder.steps,
+           edges: builder.edges
+         }}
+      end
+    end
+  end
+
+  defp check_errors(%{errors: []}), do: :ok
+
+  defp check_errors(%{errors: errors}) do
+    messages = errors |> Enum.reverse() |> Enum.map(& &1.message)
+    Error.wrap(:workflow_error, "Builder errors: #{Enum.join(messages, "; ")}")
+  end
+
+  @doc """
+  Validates and returns a `%Workflow{}`, raising on failure.
+  """
+  @spec build!(t()) :: Workflow.t()
+  def build!(%__MODULE__{} = builder) do
+    case build(builder) do
+      {:ok, workflow} -> workflow
+      {:error, error} -> raise ArgumentError, to_string(error)
+    end
+  end
+
+  # --- Private: Auto-edge generation from inputs ---
+
+  defp merge_input_edges(builder) do
+    explicit_pairs = MapSet.new(builder.edges, fn e -> {e.from, e.to} end)
+
+    pairs =
+      builder.steps
+      |> Enum.flat_map(fn {step_id, step} ->
+        Enum.map(step.inputs, fn input_id -> {input_id, step_id} end)
+      end)
+      |> Enum.reject(fn pair -> MapSet.member?(explicit_pairs, pair) end)
+
+    Enum.reduce(pairs, builder, fn {from, to}, acc ->
+      case Edge.new(from: from, to: to) do
+        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:error, error} -> %{acc | errors: [error | acc.errors]}
+      end
+    end)
+  end
+
+  # --- Private: Validation ---
+
+  defp validate_edge_endpoints(builder) do
+    known_ids = Map.keys(builder.steps) |> MapSet.new()
+
+    invalid =
+      Enum.flat_map(builder.edges, fn edge ->
+        missing = []
+
+        missing =
+          if MapSet.member?(known_ids, edge.from), do: missing, else: [edge.from | missing]
+
+        missing = if MapSet.member?(known_ids, edge.to), do: missing, else: [edge.to | missing]
+        missing
+      end)
+      |> Enum.uniq()
+
+    if invalid == [] do
+      :ok
+    else
+      Error.wrap(
+        :workflow_error,
+        "Edges reference unknown step IDs: #{inspect(invalid)}"
+      )
+    end
+  end
+
+  defp validate_input_refs(builder) do
+    known_ids = Map.keys(builder.steps) |> MapSet.new()
+
+    invalid =
+      builder.steps
+      |> Enum.flat_map(fn {_id, step} -> step.inputs end)
+      |> Enum.reject(fn id -> MapSet.member?(known_ids, id) end)
+      |> Enum.uniq()
+
+    if invalid == [] do
+      :ok
+    else
+      Error.wrap(
+        :workflow_error,
+        "Step inputs reference unknown step IDs: #{inspect(invalid)}"
+      )
+    end
+  end
+
+  defp validate_no_cycles(builder) do
+    # Kahn's algorithm for cycle detection
+    step_ids = Map.keys(builder.steps)
+
+    # Build adjacency list and in-degree count
+    in_degree = Map.new(step_ids, fn id -> {id, 0} end)
+
+    in_degree =
+      Enum.reduce(builder.edges, in_degree, fn edge, acc ->
+        Map.update!(acc, edge.to, &(&1 + 1))
+      end)
+
+    # Start with zero in-degree nodes
+    queue = for {id, 0} <- in_degree, do: id
+    {sorted_count, _in_degree} = topo_walk(queue, builder.edges, in_degree, 0)
+
+    if sorted_count == length(step_ids) do
+      :ok
+    else
+      Error.wrap(:workflow_error, "Workflow contains a cycle")
+    end
+  end
+
+  defp topo_walk([], _edges, in_degree, count), do: {count, in_degree}
+
+  defp topo_walk([node | rest], edges, in_degree, count) do
+    # Find successors of this node
+    successors =
+      Enum.filter(edges, fn e -> e.from == node end)
+      |> Enum.map(fn e -> e.to end)
+
+    # Decrease in-degree for each successor
+    {in_degree, new_queue} =
+      Enum.reduce(successors, {in_degree, []}, fn succ, {deg, q} ->
+        new_deg = Map.update!(deg, succ, &(&1 - 1))
+
+        if Map.get(new_deg, succ) == 0 do
+          {new_deg, [succ | q]}
+        else
+          {new_deg, q}
+        end
+      end)
+
+    topo_walk(rest ++ new_queue, edges, in_degree, count + 1)
+  end
+end

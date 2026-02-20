@@ -422,36 +422,71 @@ Telemetry-based instrumentation and an internal event bus for UI integration and
 
 ---
 
-## Phase 8: Workflow Engine
+## Phase 8: Workflow Engine ✅
 
 DAG-based workflow execution for deterministic multi-step pipelines.
 
 ### Core Structs
 
-- [ ] `Agora.Workflow.Step` — id, agent_config or function, inputs, outputs
-- [ ] `Agora.Workflow.Edge` — from_step, to_step, condition (optional)
-- [ ] `Agora.Workflow` — steps, edges, metadata
+- [x] `Agora.Workflow.Step` — id, handler (function or AgentConfig), inputs, outputs, input_mapper, timeout, retry
+  - Step `inputs` drives auto-edge generation in Builder; `outputs` is optional documentation schema (executor does not enforce)
+- [x] `Agora.Workflow.Edge` — from, to, condition (optional 1-arity function)
+- [x] `Agora.Workflow` — steps map, edges list, metadata
 
 ### DAG Executor
 
-- [ ] `Agora.Workflow.Executor` — topological sort, parallel fan-out where edges allow
-  - [ ] Execute steps as supervised tasks
-  - [ ] Pass outputs from completed steps as inputs to dependents
-  - [ ] Handle step failure (retry policy, skip, abort)
-- [ ] Support conditional edges (branching workflows)
+- [x] `Agora.Workflow.Executor` — topological sort (Kahn's algorithm), parallel fan-out via Task.Supervisor
+  - [x] Execute steps as supervised tasks under `Agora.WorkflowTaskSupervisor`
+  - [x] Pass outputs from completed steps as inputs to dependents
+  - [x] Handle step failure (per-step retry count, `:abort` or `:skip` mode)
+  - [x] Deadline-based timeout (ToolBroker pattern) — no task leakage
+  - [x] Sorted step IDs within levels for deterministic execution
+- [x] Support conditional edges (1-arity condition functions with explicit resolution matrix)
+- [x] AgentConfig handler dispatch: starts temporary agent per step, with explicit `input_mapper` or default JSON encoding
+- [x] Result contract: `{:ok, value} | {:error, Error.t()} | :skipped`
+- [x] Telemetry: `[:agora, :workflow, :run]` and `[:agora, :workflow, :step]` via `span/3`
 
 ### Builder API
 
-- [ ] `Agora.Workflow.Builder` — DSL-style helpers
-  - [ ] `step/3`, `edge/3`, `sequence/1`, `parallel/1`
-  - [ ] Validate DAG (cycle detection) at build time
+- [x] `Agora.Workflow.Builder` — DSL-style pipeline helpers
+  - [x] `step/3`, `edge/3`, `sequence/2`, `parallel/3` (real fan-out/fan-in composition)
+  - [x] Auto-edge generation from step `inputs` declarations (explicit edges take precedence)
+  - [x] Non-bang helpers never raise — errors accumulate and surface via `build/1`
+  - [x] Validate DAG (cycle detection via Kahn's algorithm) at build time
 
 ### Checkpoint Store
 
-- [ ] `Agora.Workflow.CheckpointStore` — persist step results for resumability
-  - [ ] In-memory and file-backed implementations
-- [ ] Tests for linear, branching, and parallel workflows
-- [ ] Test checkpoint and resume
+- [x] `Agora.Workflow.CheckpointStore` — behaviour + dispatch (Memory pattern)
+  - [x] `load_all/2` maps backend keys to atoms via known step IDs (safe against stale entries)
+  - [x] In-memory backend (`CheckpointStore.Memory`)
+  - [x] File-backed backend (`CheckpointStore.File`) with atomic writes, result serialization, optional namespace
+- [x] Tests for linear, parallel, branching, conditional, and retry workflows
+- [x] Test checkpoint save and resume with File backend
+
+### Design Decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Executor model | Stateless module | Matches ToolBroker; workflows are one-shot |
+| Step handler | Function or AgentConfig | Functions for deterministic logic; AgentConfig for LLM steps |
+| Agent input_mapper | Explicit `(map() -> String.t() \| Message.t())` | Stable data contract vs ad-hoc string concat |
+| Result contract | `{:ok, value} \| {:error, Error.t()} \| :skipped` | Unambiguous; handlers pattern match on exact shape |
+| Failure mode | `:abort` (default) or `:skip` | Abort for strict pipelines; skip for best-effort |
+| Conditional edges | 1-arity fn; explicit resolution matrix | Deterministic; no deadlock possible |
+| Parallel fan-out | `parallel/3` creates edges | Real composition (from/to), not just assertion |
+| Checkpoint keys | String keys in backend; dispatch maps to atoms | Safe against stale/unknown entries |
+| Determinism | Sort step IDs within levels | Consistent execution and output order |
+
+### Testing
+
+- [x] Step, Edge, Workflow struct tests
+- [x] Builder tests (step/edge/sequence/parallel, auto-edges, cycle detection, build validation)
+- [x] CheckpointStore dispatch tests (init, save, load, load_all key mapping, safe_call wrapping)
+- [x] Memory backend tests (save/load round-trip, clear)
+- [x] File backend tests (save/load, atomic write, namespace, result serialization)
+- [x] Executor tests (linear, parallel, single step, input, abort/skip, timeout, retry, conditional edges, crash safety, checkpoint, telemetry, AgentConfig handler)
+- [x] Integration tests (builder + executor end-to-end, conditional branching, checkpoint + resume with File, auto-edge execution, convenience API)
+- [x] 705 total tests (129 new), 0 failures
 
 ---
 
@@ -625,11 +660,14 @@ lib/agora/
 ├── telemetry.ex                       # Phase 7
 ├── event_bus.ex                       # Phase 7
 │
+├── workflow.ex                        # Phase 8
 └── workflow/
     ├── step.ex                        # Phase 8
     ├── edge.ex                        # Phase 8
-    ├── workflow.ex                    # Phase 8
     ├── executor.ex                    # Phase 8
     ├── builder.ex                     # Phase 8
-    └── checkpoint_store.ex            # Phase 8
+    ├── checkpoint_store.ex            # Phase 8 (behaviour + dispatch)
+    └── checkpoint_store/
+        ├── memory.ex                  # Phase 8
+        └── file.ex                    # Phase 8
 ```

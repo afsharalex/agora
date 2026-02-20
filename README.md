@@ -13,6 +13,7 @@
   <a href="#middleware">Middleware</a> |
   <a href="#memory">Memory</a> |
   <a href="#orchestration">Orchestration</a> |
+  <a href="#workflows">Workflows</a> |
   <a href="#observability">Observability</a> |
   <a href="#architecture">Architecture</a> |
   <a href="docs/Design-v0.md">Design Doc</a> |
@@ -355,6 +356,89 @@ condition = TerminationCondition.any_of([
 ])
 ```
 
+## Workflows
+
+Workflows define deterministic DAG-based pipelines where execution order is predetermined. Unlike orchestrators (LLM-driven routing), workflows follow predefined step dependencies with parallel fan-out, conditional branching, retry, and checkpoint-based resumability.
+
+### Build and run a workflow
+
+```elixir
+alias Agora.Workflow.Builder
+
+workflow =
+  Builder.new()
+  |> Builder.step(:fetch, fn _r -> {:ok, fetch_data()} end)
+  |> Builder.step(:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end)
+  |> Builder.step(:save, fn r -> {:ok, save(elem(r[:transform], 1))} end)
+  |> Builder.sequence([:fetch, :transform, :save])
+  |> Builder.build!()
+
+{:ok, results} = Agora.run_workflow(workflow, input: "source")
+```
+
+### Parallel fan-out/fan-in
+
+```elixir
+workflow =
+  Builder.new()
+  |> Builder.step(:source, fn _r -> {:ok, data} end)
+  |> Builder.step(:analyze, fn r -> {:ok, analyze(elem(r[:source], 1))} end)
+  |> Builder.step(:summarize, fn r -> {:ok, summarize(elem(r[:source], 1))} end)
+  |> Builder.step(:combine, fn r ->
+    {:ok, merge(elem(r[:analyze], 1), elem(r[:summarize], 1))}
+  end)
+  |> Builder.parallel([:analyze, :summarize], from: :source, to: :combine)
+  |> Builder.build!()
+```
+
+### Conditional branching
+
+```elixir
+workflow =
+  Builder.new()
+  |> Builder.step(:check, fn r -> {:ok, r[:input]} end)
+  |> Builder.step(:path_a, fn _r -> {:ok, "took path A"} end)
+  |> Builder.step(:path_b, fn _r -> {:ok, "took path B"} end)
+  |> Builder.edge(:check, :path_a, condition: fn r -> elem(r[:check], 1) == "go_a" end)
+  |> Builder.edge(:check, :path_b, condition: fn r -> elem(r[:check], 1) == "go_b" end)
+  |> Builder.build!()
+```
+
+### Agent-powered steps
+
+Steps can use `AgentConfig` as the handler to run an LLM agent within the workflow:
+
+```elixir
+config = AgentConfig.new!(provider: :anthropic, model: "claude-sonnet-4-20250514")
+
+workflow =
+  Builder.new()
+  |> Builder.step(:data, fn _r -> {:ok, fetch_data()} end)
+  |> Builder.step(:agent, config, input_mapper: fn r -> "Analyze: #{elem(r[:data], 1)}" end)
+  |> Builder.sequence([:data, :agent])
+  |> Builder.build!()
+```
+
+### Checkpoint persistence
+
+Resume workflows from where they left off using checkpoint stores:
+
+```elixir
+{:ok, results} = Agora.run_workflow(workflow,
+  checkpoint_store: {Agora.Workflow.CheckpointStore.File, path: "/tmp/workflow.json"}
+)
+```
+
+### Workflow features
+
+| Feature | Description |
+|---------|-------------|
+| Retry | Per-step retry count with crash recovery (`retry: 3`) |
+| Timeout | Per-step deadline-based timeout (`timeout: 30_000`) |
+| Failure modes | `:abort` (default) fails fast; `:skip` continues past failures |
+| Auto-edges | Declare `inputs: [:a, :b]` on a step to auto-generate dependency edges |
+| Determinism | Steps within each topological level are sorted before execution |
+
 ## Observability
 
 Agora emits telemetry events at key instrumentation points via the `:telemetry` library. Attach handlers to observe agent behavior without modifying agent code.
@@ -370,6 +454,8 @@ Agora emits telemetry events at key instrumentation points via the `:telemetry` 
 | `[:agora, :middleware, :call]` | `:start`, `:stop` | `Agora.Middleware.Chain` |
 | `[:agora, :orchestrator, :run]` | `:start`, `:stop` | `Agora.Orchestrator.Runner` |
 | `[:agora, :orchestrator, :step]` | `:start`, `:stop` | `Agora.Orchestrator.Runner` |
+| `[:agora, :workflow, :run]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
+| `[:agora, :workflow, :step]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
 
 See `Agora.Telemetry` moduledoc for full measurement and metadata details per event.
 
@@ -424,6 +510,10 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Orchestrator.TerminationCondition` | Composable conditions (closures) for stopping orchestration |
 | `Agora.Telemetry` | Telemetry helpers (`span/3`, `emit/3`) and canonical event documentation |
 | `Agora.EventBus` | Registry-backed pub/sub for internal component messaging |
+| `Agora.Workflow` | DAG-based workflow struct (steps, edges, metadata) |
+| `Agora.Workflow.Builder` | DSL for constructing workflows (step, edge, sequence, parallel) |
+| `Agora.Workflow.Executor` | Stateless DAG executor with parallel fan-out, retry, checkpoints |
+| `Agora.Workflow.CheckpointStore` | Behaviour for checkpoint persistence (Memory, File backends) |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
 
 ### Config resolution order
@@ -462,7 +552,7 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 5 | Orchestration | Complete |
 | 6 | Memory System | Complete |
 | 7 | Observability | Complete |
-| 8 | Workflow Engine | Planned |
+| 8 | Workflow Engine | Complete |
 | 9 | Streaming Support | Planned |
 | 10 | Top-Level API & Release | Planned |
 

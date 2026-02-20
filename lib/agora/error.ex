@@ -18,6 +18,7 @@ defmodule Agora.Error do
           | :middleware_error
           | :memory_error
           | :orchestration_error
+          | :workflow_error
           | :unknown
 
   @type t :: %__MODULE__{
@@ -38,6 +39,7 @@ defmodule Agora.Error do
     :middleware_error,
     :memory_error,
     :orchestration_error,
+    :workflow_error,
     :unknown
   ]
 

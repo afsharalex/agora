@@ -33,7 +33,7 @@ All LLM interaction flows through the `Agora.Provider` behaviour. Providers tran
 - **`Agora.Provider`** — Behaviour defining `chat/2` callback + resolution (`resolve/1` maps atoms like `:anthropic` to modules). `get_provider_opt/3` implements two-tier config lookup: `provider_opts` first, then application config.
 - **`Agora.Message`** — Universal message struct with role (`:system | :user | :assistant | :tool`), content, tool_calls, tool_results, metadata. Content is nilable for assistant messages that only contain tool calls.
 - **`Agora.AgentConfig`** — NimbleOptions-validated configuration. `provider_opts` keyword list carries per-agent overrides (API keys, base URLs, `req_options` for test injection).
-- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:middleware_error`, `:memory_error`, `:orchestration_error`, `:unknown`.
+- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:middleware_error`, `:memory_error`, `:orchestration_error`, `:workflow_error`, `:unknown`.
 - **`Agora.Config`** — Wraps `Application.get_env/3`. Convention: `api_key(:anthropic)` reads `:anthropic_api_key`.
 
 ### Provider Implementations
@@ -65,7 +65,7 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–7 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability) are complete. Next up: Phase 8 (Workflow Engine) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–8 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability, Workflow Engine) are complete. Next up: Phase 9 (Streaming Support) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
 
 ### Memory System (Phase 6)
 
@@ -86,3 +86,18 @@ Phases 0–7 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Midd
 - Agent exception: `[:agora, :agent, :run, :exception]` emitted in `safe_reasoning_loop` catch with sanitized metadata
 - `Agora.EventBus` — Registry-backed pub/sub: `subscribe/2`, `broadcast/2`, `unsubscribe/1`; idempotent subscribe; NOT wired to telemetry
 - Existing Agent/Orchestrator telemetry unchanged (manual `:telemetry.execute`); new instrumentation uses `:telemetry.span/3`
+
+### Workflow Engine (Phase 8)
+
+- `Agora.Workflow.Builder` — DSL for constructing DAG workflows: `step/3`, `edge/3`, `sequence/2`, `parallel/2`, `build/1`
+- `Agora.Workflow.Executor` — stateless DAG executor with topological sort, parallel fan-out via `Task.Supervisor`
+- Step handlers: 1-arity functions or `AgentConfig` structs. `input_mapper` controls AgentConfig message construction.
+- Step `inputs` drives auto-edge generation; `outputs` is documentation only
+- Result contract: `{:ok, value} | {:error, Error.t()} | :skipped`
+- Conditional edges: 1-arity functions with explicit resolution matrix (satisfied/not_required/failed_dep/pending)
+- Failure modes: `:abort` (default, fail fast) or `:skip` (continue past failures)
+- Deadline-based timeout (ToolBroker pattern); per-step retry count
+- `Agora.Workflow.CheckpointStore` behaviour + dispatch: `Memory` and `File` backends
+- Checkpoint key mapping: backends return native keys, dispatch maps string→atom via known step IDs
+- Telemetry: `[:agora, :workflow, :run]` and `[:agora, :workflow, :step]` events via `span/3`
+- `Agora.run_workflow/2` convenience function
