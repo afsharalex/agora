@@ -5,8 +5,23 @@ Guidance for coding agents working in this repository.
 ## Scope
 
 - This project is an Elixir library (`:agora`) targeting Elixir `~> 1.19`.
-- Primary focus right now: foundation structs + provider abstraction layer.
+- Phases 0-10 are complete; current focus is stabilization, docs quality, and release readiness.
 - Architecture references live in `TODO.md`, `CLAUDE.md`, and `docs/Design-v0.md`.
+
+## Current Status
+
+- Core runtime is complete: providers, tools, agent runtime, middleware, orchestration, memory, observability, workflows, and streaming.
+- Top-level convenience API is available:
+  - `Agora.run/2` (one-shot run)
+  - `Agora.stream/2` (one-shot streaming with cleanup)
+  - `Agora.start_agent/1,2` / `Agora.stop_agent/1`
+  - `Agora.run_workflow/1,2`
+- Phase 10 deliverables are present:
+  - `guides/*.md` (7 guides)
+  - `examples/*.exs` (5 runnable examples)
+  - `CHANGELOG.md`
+  - `.github/workflows/ci.yml`
+  - Hex metadata + ExDoc grouping in `mix.exs`
 
 ## Rules Files Check
 
@@ -22,6 +37,10 @@ Guidance for coding agents working in this repository.
 - `test/agora/**/*.exs`: unit tests mirroring source module structure.
 - `config/config.exs`: default app config values.
 - `config/runtime.exs`: runtime API key wiring from environment variables.
+- `examples/*.exs`: runnable end-to-end examples (one-shot, tools, streaming, orchestration, workflow).
+- `guides/*.md`: user-facing guides used in ExDoc extras.
+- `.github/workflows/ci.yml`: CI for compile, format check, tests, and dialyzer.
+- `CHANGELOG.md`: Keep a Changelog formatted release notes.
 
 ## Build, Lint, and Test Commands
 
@@ -37,6 +56,8 @@ mix format
 mix format --check-formatted
 mix dialyzer
 mix docs
+mix hex.build
+mix run examples/workflow.exs
 ```
 
 ## Test Command Notes
@@ -46,6 +67,7 @@ mix docs
 - Single `describe` block: `mix test --only describe:"name"`.
 - This repo heavily uses `describe` blocks named after function arity (e.g. `"new/1"`).
 - Most tests are `async: true`; config-oriented tests may be synchronous.
+- Convenience API cleanup tests should run `async: false` when asserting supervisor child counts.
 
 ## Coding Style: Module Structure
 
@@ -112,6 +134,15 @@ mix docs
   - `OPENAI_API_KEY`
   - `GOOGLE_API_KEY`
 
+## Documentation Conventions
+
+- When adding/changing public API, update docs in the same change:
+  - `@doc`/`@spec` on public functions
+  - `README.md` quick-start usage where relevant
+  - relevant guide(s) in `guides/`
+  - ExDoc config in `mix.exs` if adding/removing guide pages
+- Keep examples runnable with `mix run examples/<name>.exs` and prefer Echo-based defaults for no-key local verification.
+
 ## Testing Conventions
 
 - Use `ExUnit.Case, async: true` unless mutating global app state.
@@ -128,7 +159,7 @@ mix docs
 
 - Make minimal, targeted edits; preserve existing style and naming.
 - Do not introduce new dependencies without strong justification.
-- Do not rewrite architecture opportunistically; follow current phase boundaries in `TODO.md`.
+- Do not rewrite architecture opportunistically; follow established decisions documented in `TODO.md` and `docs/Design-v0.md`.
 - When adding new modules, mirror existing test layout under `test/agora/...`.
 - If adding public API, add tests + specs + docs in the same change.
 
@@ -139,3 +170,5 @@ mix docs
 - No compile warnings (`mix compile --warnings-as-errors`).
 - New behavior covered by tests (success + failure paths).
 - Error tuple contract preserved.
+- Docs build cleanly (`mix docs`) when touching docs/public API.
+- Package still builds (`mix hex.build`) when touching `mix.exs` metadata/docs/package files.

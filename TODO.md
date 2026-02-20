@@ -562,48 +562,53 @@ Real-time token streaming from providers through the agent to callers.
 - [x] OpenAI stream tests (text streaming, tool calls, auth via 401, HTTP error)
 - [x] Agent stream tests (basic streaming, status, concurrency rejection, persistence, iteration limit, error propagation, middleware hooks, Logger compat, telemetry, custom provider, ownership)
 - [x] Agent stream integration tests (multi-turn tool loop, middleware event modification, Enumerable API, event suppression)
-- [x] 788 total tests (83 new), 0 failures
+- [x] 793 total tests (88 new), 0 failures
 
 ---
 
-## Phase 10: Top-Level API, Docs & Release
+## Phase 10: Top-Level API, Docs & Release ✅
 
 Polish the public API surface, write documentation, build examples, and prepare for Hex.pm.
 
 ### Public API
 
-- [ ] `Agora.run/2` — one-shot: create agent, run task, return result
-- [ ] `Agora.stream/2` — one-shot streaming variant
-- [ ] `Agora.start_agent/1`, `Agora.stop_agent/1` — long-lived agent management
-- [ ] `Agora.run_workflow/1` — execute a workflow definition
-- [ ] Ensure all public functions have `@doc` and `@spec`
+- [x] `Agora.run/2` — one-shot: create agent, run task, return result (try/after cleanup)
+- [x] `Agora.stream/2` — one-shot streaming variant (Stream.transform after_fun + monitor cleanup)
+- [x] `Agora.start_agent/1`, `Agora.stop_agent/1` — long-lived agent management (covered by default args)
+- [x] `Agora.run_workflow/1` — execute a workflow definition (covered by default args)
+- [x] `@doc` and `@spec` on all provider `chat/2` and `stream_chat/2` implementations
 
 ### Documentation
 
-- [ ] Module-level `@moduledoc` for every public module
-- [ ] Getting Started guide (Livebook or markdown)
-- [ ] Architecture overview diagram
-- [ ] Provider setup guides (Anthropic, OpenAI)
-- [ ] Tool authoring guide
-- [ ] Middleware authoring guide
-- [ ] Orchestrator guide with examples
-- [ ] Workflow engine guide
+- [x] Module-level `@moduledoc` for every public module (51 modules)
+- [x] Getting Started guide (`guides/getting-started.md`)
+- [x] Architecture overview with Mermaid supervision tree diagram (`guides/architecture.md`)
+- [x] Provider setup guide — Anthropic, OpenAI, Echo, custom (`guides/providers.md`)
+- [x] Tool authoring guide (`guides/tools.md`)
+- [x] Middleware authoring guide (`guides/middleware.md`)
+- [x] Orchestrator guide with examples (`guides/orchestration.md`)
+- [x] Workflow engine guide (`guides/workflows.md`)
 
 ### Examples
 
-- [ ] `examples/simple_chat.exs` — single agent Q&A
-- [ ] `examples/tool_use.exs` — agent with custom tools
-- [ ] `examples/multi_agent.exs` — orchestrated multi-agent conversation
-- [ ] `examples/workflow.exs` — DAG workflow execution
-- [ ] `examples/streaming.exs` — streaming agent output
+- [x] `examples/simple_chat.exs` — single agent Q&A (Echo provider, `Agora.run/2`)
+- [x] `examples/tool_use.exs` — agent with Calculator + DateTime tools (Echo `:function` mode)
+- [x] `examples/streaming.exs` — streaming with explicit events (Echo `:stream` mode)
+- [x] `examples/multi_agent.exs` — RoundRobin orchestration with termination conditions
+- [x] `examples/workflow.exs` — DAG workflow with parallel fan-out (pure functions)
 
 ### Hex Release Prep
 
-- [ ] Fill out `mix.exs` — description, package metadata, licenses, links, source_url
-- [ ] Add `CHANGELOG.md`
-- [ ] Add `LICENSE` (MIT or Apache-2.0)
-- [ ] CI setup (GitHub Actions: `mix test`, `mix format --check-formatted`, `mix dialyzer`)
+- [x] `mix.exs` — description, `package/0`, `docs/0`, source_url, module groups, guide extras
+- [x] `CHANGELOG.md` — Keep a Changelog format, v0.1.0 entry
+- [x] `LICENSE` — MIT (already present)
+- [x] CI setup (`.github/workflows/ci.yml` — test + dialyzer jobs, caching)
 - [ ] Publish to Hex.pm
+
+### Testing
+
+- [x] Convenience API tests (run/2 and stream/2 with cleanup verification)
+- [x] 805 total tests (12 new), 0 failures
 
 ---
 

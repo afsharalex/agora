@@ -15,6 +15,8 @@ defmodule Agora.Provider.Anthropic do
   @api_version "2023-06-01"
   @default_timeout 60_000
 
+  @doc "Sends messages to the Anthropic Messages API and returns the assistant response."
+  @spec chat([Message.t()], AgentConfig.t()) :: {:ok, Message.t()} | {:error, Error.t()}
   @impl true
   def chat(messages, %AgentConfig{} = config) do
     with {:ok, api_key} <- fetch_api_key(config),
@@ -24,6 +26,9 @@ defmodule Agora.Provider.Anthropic do
     end
   end
 
+  @doc "Starts a streaming request to the Anthropic Messages API."
+  @spec stream_chat([Message.t()], AgentConfig.t()) ::
+          {:ok, %{pid: pid(), ref: reference()}} | {:error, Error.t()}
   @impl true
   def stream_chat(messages, %AgentConfig{} = config) do
     caller = self()

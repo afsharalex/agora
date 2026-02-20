@@ -65,7 +65,17 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–9 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability, Workflow Engine, Streaming Support) are complete. Next up: Phase 10 (Top-Level API, Docs & Release) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–10 complete. See `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+
+### Top-Level API & Release (Phase 10)
+
+- `Agora.run/2` — one-shot agent: start, run, cleanup via `try/after`
+- `Agora.stream/2` — one-shot streaming: `Stream.transform` `after_fun` + spawn monitor for caller crash cleanup
+- `mix.exs` — `package/0`, `docs/0` with module groups and guide extras for HexDocs
+- `.github/workflows/ci.yml` — test + dialyzer jobs with deps/build/PLT caching
+- 7 guides under `guides/` (getting-started, architecture, providers, tools, middleware, orchestration, workflows)
+- 5 examples under `examples/` — all use Echo provider (no API key needed)
+- `CHANGELOG.md` — Keep a Changelog format, single v0.1.0 entry
 
 ### Memory System (Phase 6)
 

@@ -74,7 +74,37 @@ config :agora,
   openai_api_key: System.get_env("OPENAI_API_KEY")
 ```
 
-### Run an agent
+### One-shot agent
+
+The simplest way to use an agent — creates a temporary process, runs, and cleans up:
+
+```elixir
+config = Agora.AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  instructions: "You are a helpful assistant."
+)
+
+{:ok, response} = Agora.run(config, "Hello!")
+IO.puts(response.content)
+# => "Hello! How can I help you today?"
+```
+
+### One-shot streaming
+
+Stream tokens as they're generated:
+
+```elixir
+{:ok, stream} = Agora.stream(config, "Tell me a story")
+
+stream
+|> Stream.filter(&(&1.type == :text_delta))
+|> Enum.each(fn event -> IO.write(event.data.text) end)
+```
+
+### Long-lived agent
+
+For multi-turn conversations, start a supervised agent process:
 
 ```elixir
 alias Agora.{AgentConfig, Agent}
@@ -659,7 +689,7 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 7 | Observability | Complete |
 | 8 | Workflow Engine | Complete |
 | 9 | Streaming Support | Complete |
-| 10 | Top-Level API & Release | Planned |
+| 10 | Top-Level API & Release | Complete |
 
 ## Development
 

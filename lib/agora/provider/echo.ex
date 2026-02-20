@@ -20,12 +20,17 @@ defmodule Agora.Provider.Echo do
 
   alias Agora.{AgentConfig, Error, Message, Provider, StreamEvent, ToolCall}
 
+  @doc "Returns a predictable response based on the configured echo mode."
+  @spec chat([Message.t()], AgentConfig.t()) :: {:ok, Message.t()} | {:error, Error.t()}
   @impl true
   def chat(messages, %AgentConfig{} = config) do
     mode = Provider.get_provider_opt(config, :echo_mode, :echo)
     handle_mode(mode, messages, config)
   end
 
+  @doc "Starts streaming events based on the configured echo mode."
+  @spec stream_chat([Message.t()], AgentConfig.t()) ::
+          {:ok, %{pid: pid(), ref: reference()}} | {:error, Error.t()}
   @impl true
   def stream_chat(messages, %AgentConfig{} = config) do
     caller = self()

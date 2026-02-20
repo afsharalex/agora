@@ -6,7 +6,7 @@ defmodule Agora do
   with provider abstraction, tool execution, middleware, and orchestration patterns.
   """
 
-  alias Agora.AgentConfig
+  alias Agora.{AgentConfig, Error, Message}
 
   @doc """
   Returns the current version of Agora.
@@ -61,6 +61,105 @@ defmodule Agora do
           {:ok, Agora.Stream.t()} | {:error, Agora.Error.t()}
   def stream_run(agent, input) do
     Agora.Agent.stream_run(agent, input)
+  end
+
+  @doc """
+  One-shot agent execution: creates a temporary agent, runs the input, returns the result.
+
+  The agent is always cleaned up after the call, even on error.
+
+  ## Examples
+
+      config = AgentConfig.new!(provider: :echo, model: "echo")
+      {:ok, response} = Agora.run(config, "Hello")
+
+  """
+  @spec run(AgentConfig.t(), String.t() | Message.t()) ::
+          {:ok, Message.t()} | {:error, Error.t()}
+  def run(%AgentConfig{} = config, input) do
+    case Agora.Agent.Supervisor.start_agent(config) do
+      {:ok, pid} ->
+        try do
+          Agora.Agent.run(pid, input)
+        after
+          Agora.Agent.Supervisor.stop_agent(pid)
+        end
+
+      {:error, reason} ->
+        {:error, Error.new(:config_error, "Failed to start agent: #{inspect(reason)}")}
+    end
+  end
+
+  @doc """
+  One-shot streaming: creates a temporary agent, starts streaming, returns an enumerable.
+
+  The agent is automatically stopped when the stream is fully consumed, halted early
+  (e.g. via `Enum.take/2`), or if the calling process crashes. If the caller discards
+  the stream without enumerating it, the agent will be cleaned up when the caller
+  process exits.
+
+  Returns `{:ok, Enumerable.t()}` (not `Agora.Stream.t()`) because the stream is
+  wrapped with cleanup logic.
+
+  ## Examples
+
+      config = AgentConfig.new!(provider: :echo, model: "echo")
+      {:ok, stream} = Agora.stream(config, "Hello")
+
+      stream
+      |> Stream.filter(&(&1.type == :text_delta))
+      |> Enum.each(fn event -> IO.write(event.data.text) end)
+
+  """
+  @spec stream(AgentConfig.t(), String.t() | Message.t()) ::
+          {:ok, Enumerable.t()} | {:error, Error.t()}
+  def stream(%AgentConfig{} = config, input) do
+    caller = self()
+
+    case Agora.Agent.Supervisor.start_agent(config) do
+      {:ok, pid} ->
+        case Agora.Agent.stream_run(pid, input) do
+          {:ok, agora_stream} ->
+            stream_task_pid = agora_stream.pid
+
+            spawn(fn ->
+              caller_ref = Process.monitor(caller)
+              agent_ref = Process.monitor(pid)
+
+              receive do
+                {:DOWN, ^caller_ref, :process, ^caller, _reason} ->
+                  cleanup_stream(stream_task_pid, pid)
+
+                {:DOWN, ^agent_ref, :process, ^pid, _reason} ->
+                  :ok
+              end
+            end)
+
+            wrapped =
+              Stream.transform(
+                agora_stream,
+                fn -> :ok end,
+                fn event, :ok -> {[event], :ok} end,
+                fn :ok -> cleanup_stream(stream_task_pid, pid) end
+              )
+
+            {:ok, wrapped}
+
+          {:error, _} = error ->
+            Agora.Agent.Supervisor.stop_agent(pid)
+            error
+        end
+
+      {:error, reason} ->
+        {:error, Error.new(:config_error, "Failed to start agent: #{inspect(reason)}")}
+    end
+  end
+
+  # Stops the streaming relay task and then the agent process.
+  # Both operations are idempotent — safe to call multiple times.
+  defp cleanup_stream(stream_task_pid, agent_pid) do
+    Process.exit(stream_task_pid, :shutdown)
+    Agora.Agent.Supervisor.stop_agent(agent_pid)
   end
 
   @doc """
