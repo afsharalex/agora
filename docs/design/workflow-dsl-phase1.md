@@ -398,18 +398,46 @@ These are explicitly NOT part of Phase 1. They will only be built if real user d
 
 ### Phase 2: Block macro DSL
 
-`Agora.Workflow.DSL` module with `workflow do ... end` macro that compiles to Builder pipeline. Inline `do` blocks for step handlers with injected `results` binding. Only justified if Phase 1 proves insufficient for common authoring patterns.
+`Agora.Workflow.DSL` module with `workflow do ... end` macro that compiles to Builder pipeline. Inline `do` blocks for step handlers with injected `results` binding. Includes `~>` operator for visual DAG wiring within the macro scope. Only justified if Phase 1 proves insufficient for common authoring patterns.
+
+**`~>` edge operator** — visual DAG wiring scoped to the `workflow` block. `~>` is in Elixir's parser operator table, so `:a ~> :b` parses to `{:~>, meta, [:a, :b]}` AST without a runtime definition. The `workflow` macro pattern-matches on these AST nodes and emits `Builder.edge/4` calls.
+
+Interpretation rules:
+
+| Form | Expansion | Pattern |
+|---|---|---|
+| `:a ~> :b` | `edge(:a, :b)` | Single edge |
+| `:a ~> :b ~> :c` | `edge(:a, :b)` + `edge(:b, :c)` | Chain |
+| `[:a, :b] ~> :c` | `edge(:a, :c)` + `edge(:b, :c)` | Fan-in |
+| `:a ~> [:b, :c]` | `edge(:a, :b)` + `edge(:a, :c)` | Fan-out |
+
+Conditional edges use explicit `edge/3` — attaching conditions to `~>` would defeat its visual clarity purpose.
+
+`~>` and `after:` are complementary: `after:` collocates a dependency with the step that needs it; `~>` shows the topology in a dedicated visual section. A workflow can use either or both.
+
+```elixir
+workflow do
+  step :fetch do
+    {:ok, API.get_users()}
+  end
+
+  step :count, after: :fetch, run: &count/1
+  step :format, after: :fetch, run: &format/1
+  step :summary, run: &summarize/1
+
+  [:count, :format] ~> :summary
+end
+```
 
 ### Phase 3: Module DSL
 
-`use Agora.Workflow` with `@before_compile` validation. Only justified if workflows become reusable, versioned, production artifacts (similar to Broadway pipelines or Oban workers). Currently workflows are ephemeral data — the `%Workflow{}` struct is the right abstraction.
+`use Agora.Workflow.Definition` with `@before_compile` validation. Only justified if workflows become reusable, versioned, production artifacts (similar to Broadway pipelines or Oban workers). Currently workflows are ephemeral data — the `%Workflow{}` struct is the right abstraction.
 
 ### Explicitly rejected
 
 | Idea | Reason |
 |---|---|
-| `~>` operator | Confuses tooling, no real benefit over `after:` |
 | `join/3` | `after: [...]` already communicates fan-in |
 | `agent_step` sugar | Hides AgentConfig complexity users need to understand |
 | `input/1` macro | `results[:step_id]` is already one expression |
-| `run:` keyword for handler | Redundant with positional arg in function Builder |
+| `run:` keyword for handler (Phase 1) | Redundant with positional arg in function Builder (accepted in Phase 2 macro DSL where positional args don't apply) |
