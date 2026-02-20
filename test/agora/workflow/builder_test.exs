@@ -614,6 +614,100 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "chain/2" do
+    test "2-tuple defines step correctly" do
+      builder =
+        Builder.new()
+        |> Builder.chain([{:a, &handler/1}])
+
+      assert Map.has_key?(builder.steps, :a)
+      assert builder.steps[:a].id == :a
+    end
+
+    test "3-tuple defines step with opts" do
+      builder =
+        Builder.new()
+        |> Builder.chain([{:a, &handler/1, retry: 2, timeout: 5_000}])
+
+      assert builder.steps[:a].retry == 2
+      assert builder.steps[:a].timeout == 5_000
+    end
+
+    test "linear edges generated between consecutive steps" do
+      assert {:ok, workflow} =
+               Builder.new()
+               |> Builder.chain([
+                 {:a, &handler/1},
+                 {:b, &handler/1},
+                 {:c, &handler/1}
+               ])
+               |> Builder.build()
+
+      assert length(workflow.edges) == 2
+      [e1, e2] = workflow.edges
+      assert {e1.from, e1.to} == {:a, :b}
+      assert {e2.from, e2.to} == {:b, :c}
+    end
+
+    test "wiring keys in tuple opts produces error" do
+      builder =
+        Builder.new()
+        |> Builder.chain([{:a, &handler/1, after: :x}])
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "wiring options"
+    end
+
+    test "step_defaults applied to chain steps" do
+      builder =
+        Builder.new(step_defaults: [timeout: 5_000])
+        |> Builder.chain([{:a, &handler/1}])
+
+      assert builder.steps[:a].timeout == 5_000
+    end
+
+    test "duplicate step ID within chain produces error" do
+      builder =
+        Builder.new()
+        |> Builder.chain([
+          {:a, &handler/1},
+          {:a, &handler/1}
+        ])
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "already exists"
+    end
+
+    test "empty list is a no-op" do
+      builder = Builder.new() |> Builder.chain([])
+      assert builder.steps == %{}
+      assert builder.edges == []
+      assert builder.errors == []
+    end
+
+    test "single-element list defines step with no edges" do
+      builder = Builder.new() |> Builder.chain([{:a, &handler/1}])
+      assert Map.has_key?(builder.steps, :a)
+      assert builder.edges == []
+    end
+
+    test "overlapping adjacency between two chains produces error" do
+      builder =
+        Builder.new()
+        |> Builder.chain([{:a, &handler/1}, {:b, &handler/1}])
+        |> Builder.sequence([:a, :b])
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "already exists"
+    end
+
+    test "invalid tuple shape produces error" do
+      builder = Builder.new() |> Builder.chain([{:a}])
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "expects {id, handler}"
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =

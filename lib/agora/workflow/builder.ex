@@ -146,6 +146,84 @@ defmodule Agora.Workflow.Builder do
     end)
   end
 
+  @wiring_keys [:after, :inputs, :when, :condition]
+
+  @doc """
+  Defines a linear pipeline of steps and wires them in sequence.
+
+  Each element is a `{id, handler}` or `{id, handler, opts}` tuple. Steps are
+  registered via `step/4` and then chained via `sequence/2`. Wiring keys
+  (`:after`, `:inputs`, `:when`, `:condition`) are not allowed in tuple opts
+  since `chain/2` manages the edge topology.
+
+  `step_defaults` from `Builder.new/1` are applied to each step.
+
+  ## Examples
+
+      Builder.new(step_defaults: [retry: 1])
+      |> Builder.chain([
+        {:fetch, &fetch/1},
+        {:transform, &transform/1},
+        {:load, &load/1, timeout: 5_000}
+      ])
+
+  """
+  @spec chain(t(), [{atom(), Step.handler()} | {atom(), Step.handler(), keyword()}]) :: t()
+  def chain(%__MODULE__{} = builder, tuples) when is_list(tuples) do
+    {builder, ids} =
+      Enum.reduce(tuples, {builder, []}, fn tuple, {acc, ids} ->
+        case normalize_chain_tuple(tuple) do
+          {:error, error} ->
+            {%{acc | errors: [error | acc.errors]}, ids}
+
+          {:ok, id, handler, opts} ->
+            case validate_no_wiring_keys(opts) do
+              {:error, error} ->
+                {%{acc | errors: [error | acc.errors]}, ids}
+
+              :ok ->
+                errors_before = length(acc.errors)
+                acc = step(acc, id, handler, opts)
+
+                if length(acc.errors) == errors_before do
+                  {acc, [id | ids]}
+                else
+                  {acc, ids}
+                end
+            end
+        end
+      end)
+
+    sequence(builder, Enum.reverse(ids))
+  end
+
+  defp normalize_chain_tuple({id, handler}) when is_atom(id), do: {:ok, id, handler, []}
+
+  defp normalize_chain_tuple({id, handler, opts}) when is_atom(id) and is_list(opts),
+    do: {:ok, id, handler, opts}
+
+  defp normalize_chain_tuple(other),
+    do:
+      {:error,
+       Error.new(
+         :workflow_error,
+         "chain/2 expects {id, handler} or {id, handler, opts} tuples, got: #{inspect(other)}"
+       )}
+
+  defp validate_no_wiring_keys(opts) do
+    found = Keyword.keys(opts) |> Enum.filter(&(&1 in @wiring_keys))
+
+    if found == [] do
+      :ok
+    else
+      {:error,
+       Error.new(
+         :workflow_error,
+         "chain/2 does not accept wiring options (#{inspect(found)})"
+       )}
+    end
+  end
+
   @doc """
   Creates fan-out and/or fan-in edges for parallel execution.
 
