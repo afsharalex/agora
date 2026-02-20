@@ -9,7 +9,8 @@ defmodule Agora.Provider.OpenAI do
 
   @behaviour Agora.Provider
 
-  alias Agora.{AgentConfig, Config, Error, Message, ToolCall}
+  alias Agora.{AgentConfig, Config, Error, Message, StreamEvent, ToolCall}
+  alias Agora.Provider.{SSE, StreamAccumulator}
 
   @default_base_url "https://api.openai.com"
   @default_timeout 60_000
@@ -20,6 +21,23 @@ defmodule Agora.Provider.OpenAI do
          body <- build_request_body(messages, config),
          {:ok, response} <- do_request(body, api_key, config) do
       parse_response(response)
+    end
+  end
+
+  @impl true
+  def stream_chat(messages, %AgentConfig{} = config) do
+    caller = self()
+    ref = make_ref()
+
+    with {:ok, api_key} <- fetch_api_key(config) do
+      body = build_request_body(messages, config) |> Map.put("stream", true)
+
+      {:ok, pid} =
+        Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
+          do_stream_request(body, api_key, config, caller, ref)
+        end)
+
+      {:ok, %{pid: pid, ref: ref}}
     end
   end
 
@@ -248,4 +266,252 @@ defmodule Agora.Provider.OpenAI do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # --- Streaming ---
+
+  defp do_stream_request(body, api_key, config, caller, ref) do
+    base_url = get_opt(config, :base_url, @default_base_url)
+    timeout = get_opt(config, :timeout, @default_timeout)
+    req_options = get_opt(config, :req_options, [])
+    {extra_headers, req_options} = Keyword.pop(req_options, :headers, [])
+    start_time = System.monotonic_time()
+
+    meta = %{
+      provider: :openai,
+      model: config.model,
+      message_count: length(body["messages"] || [])
+    }
+
+    req_opts =
+      [
+        url: "#{base_url}/v1/chat/completions",
+        json: body,
+        headers:
+          [
+            {"authorization", "Bearer #{api_key}"},
+            {"content-type", "application/json"}
+          ] ++ extra_headers,
+        receive_timeout: timeout,
+        retry: false,
+        into: :self
+      ]
+      |> Keyword.merge(req_options)
+
+    result =
+      case Req.post(Req.new(req_opts)) do
+        {:ok, %Req.Response{status: status, body: resp_body}} when status in 200..299 ->
+          process_stream_body(resp_body, caller, ref)
+
+        {:ok, %Req.Response{status: status, body: resp_body}} ->
+          {:error, status, normalize_error_body(resp_body)}
+
+        {:error, %Req.TransportError{reason: :timeout}} ->
+          {:error, :timeout, nil}
+
+        {:error, exception} ->
+          {:error, :transport, exception}
+      end
+
+    case result do
+      :ok ->
+        Agora.Telemetry.emit(
+          [:agora, :provider, :stream, :stop],
+          %{duration: System.monotonic_time() - start_time},
+          meta
+        )
+
+      {:error, :timeout, _} ->
+        error = Error.new(:timeout, "OpenAI streaming request timed out")
+        send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+        send(caller, {Agora.Stream, ref, StreamEvent.done()})
+
+        Agora.Telemetry.emit(
+          [:agora, :provider, :stream, :stop],
+          %{duration: System.monotonic_time() - start_time},
+          Map.put(meta, :error, error)
+        )
+
+      {:error, status, resp_body} when is_integer(status) ->
+        {:error, error} = map_http_error(status, resp_body)
+        send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+        send(caller, {Agora.Stream, ref, StreamEvent.done()})
+
+        Agora.Telemetry.emit(
+          [:agora, :provider, :stream, :stop],
+          %{duration: System.monotonic_time() - start_time},
+          Map.put(meta, :error, error)
+        )
+
+      {:error, :transport, exception} ->
+        error = Error.new(:provider_error, "OpenAI streaming failed: #{inspect(exception)}")
+        send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+        send(caller, {Agora.Stream, ref, StreamEvent.done()})
+
+        Agora.Telemetry.emit(
+          [:agora, :provider, :stream, :stop],
+          %{duration: System.monotonic_time() - start_time},
+          Map.put(meta, :error, error)
+        )
+    end
+  end
+
+  defp process_stream_body(%Req.Response.Async{} = async, caller, ref) do
+    sse_state = SSE.new()
+    acc = StreamAccumulator.new()
+    stream_receive_loop(async, sse_state, acc, caller, ref)
+  end
+
+  defp process_stream_body(body, caller, ref) when is_binary(body) do
+    sse_state = SSE.new()
+    {events, sse_state} = SSE.parse(sse_state, body)
+    {remaining, _sse_state} = SSE.flush(sse_state)
+    all_events = events ++ remaining
+
+    acc = StreamAccumulator.new()
+    acc = process_sse_events(all_events, acc, caller, ref)
+    finalize_stream(acc, caller, ref)
+    :ok
+  end
+
+  defp process_stream_body(_other, caller, ref) do
+    error = Error.new(:streaming_error, "Unexpected response body format")
+    send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+    send(caller, {Agora.Stream, ref, StreamEvent.done()})
+    :ok
+  end
+
+  defp stream_receive_loop(
+         %Req.Response.Async{ref: async_ref} = async,
+         sse_state,
+         acc,
+         caller,
+         ref
+       ) do
+    receive do
+      {^async_ref, {:data, chunk}} ->
+        {events, sse_state} = SSE.parse(sse_state, chunk)
+        acc = process_sse_events(events, acc, caller, ref)
+        stream_receive_loop(async, sse_state, acc, caller, ref)
+
+      {^async_ref, :done} ->
+        {remaining, _sse_state} = SSE.flush(sse_state)
+        acc = process_sse_events(remaining, acc, caller, ref)
+        finalize_stream(acc, caller, ref)
+        :ok
+
+      {^async_ref, {:error, reason}} ->
+        error = Error.new(:streaming_error, "Stream error: #{inspect(reason)}")
+        send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+        send(caller, {Agora.Stream, ref, StreamEvent.done()})
+        :ok
+    after
+      300_000 ->
+        error = Error.new(:timeout, "OpenAI stream receive timed out after 300s")
+        send(caller, {Agora.Stream, ref, StreamEvent.error(error)})
+        send(caller, {Agora.Stream, ref, StreamEvent.done()})
+        :ok
+    end
+  end
+
+  defp process_sse_events(events, acc, caller, ref) do
+    Enum.reduce(events, acc, fn sse_event, acc ->
+      translate_sse_event(sse_event, acc, caller, ref)
+    end)
+  end
+
+  defp translate_sse_event(%{data: "[DONE]"}, acc, _caller, _ref), do: acc
+
+  defp translate_sse_event(%{data: data}, acc, caller, ref) do
+    case Jason.decode(data) do
+      {:ok, parsed} ->
+        handle_openai_event(parsed, acc, caller, ref)
+
+      {:error, _} ->
+        acc
+    end
+  end
+
+  defp handle_openai_event(%{"choices" => [%{"delta" => delta} = choice | _]}, acc, caller, ref) do
+    acc = handle_delta_content(delta, acc, caller, ref)
+    acc = handle_delta_tool_calls(delta, acc, caller, ref)
+
+    case choice["finish_reason"] do
+      nil -> acc
+      _reason -> acc
+    end
+  end
+
+  defp handle_openai_event(_other, acc, _caller, _ref), do: acc
+
+  defp handle_delta_content(%{"content" => content}, acc, caller, ref)
+       when is_binary(content) and content != "" do
+    event = StreamEvent.text_delta(content)
+    send(caller, {Agora.Stream, ref, event})
+    StreamAccumulator.apply(acc, event)
+  end
+
+  defp handle_delta_content(_delta, acc, _caller, _ref), do: acc
+
+  defp handle_delta_tool_calls(%{"tool_calls" => tool_calls}, acc, caller, ref)
+       when is_list(tool_calls) do
+    Enum.reduce(tool_calls, acc, fn tc, acc ->
+      index = tc["index"] || 0
+      func = tc["function"] || %{}
+
+      cond do
+        # First chunk for a tool call (has id and name)
+        tc["id"] && func["name"] ->
+          event = StreamEvent.tool_call_start(tc["id"], func["name"], index)
+          send(caller, {Agora.Stream, ref, event})
+          acc = StreamAccumulator.apply(acc, event)
+
+          # May also have arguments in the first chunk
+          if func["arguments"] && func["arguments"] != "" do
+            # Look up tool call id from accumulator
+            tool_id = tc["id"]
+            delta_event = StreamEvent.tool_call_delta(tool_id, func["arguments"])
+            send(caller, {Agora.Stream, ref, delta_event})
+            StreamAccumulator.apply(acc, delta_event)
+          else
+            acc
+          end
+
+        # Subsequent delta chunks (arguments only, may lack id/name)
+        func["arguments"] && func["arguments"] != "" ->
+          # Get tool call id from accumulator by index
+          tool_id =
+            case Map.get(acc.tool_calls, index) do
+              %{id: id} -> id
+              nil -> tc["id"] || "unknown"
+            end
+
+          event = StreamEvent.tool_call_delta(tool_id, func["arguments"])
+          send(caller, {Agora.Stream, ref, event})
+          StreamAccumulator.apply(acc, event)
+
+        true ->
+          acc
+      end
+    end)
+  end
+
+  defp handle_delta_tool_calls(_delta, acc, _caller, _ref), do: acc
+
+  defp finalize_stream(acc, caller, ref) do
+    message = StreamAccumulator.to_message(acc)
+    send(caller, {Agora.Stream, ref, StreamEvent.message_complete(message)})
+    send(caller, {Agora.Stream, ref, StreamEvent.done()})
+  end
+
+  defp normalize_error_body(%Req.Response.Async{}), do: %{}
+
+  defp normalize_error_body(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _ -> %{}
+    end
+  end
+
+  defp normalize_error_body(body) when is_map(body), do: body
+  defp normalize_error_body(_), do: %{}
 end

@@ -11,6 +11,7 @@ defmodule Agora.Application do
       {Registry, keys: :duplicate, name: Agora.EventBus.Registry},
       {Task.Supervisor, name: Agora.ToolSupervisor},
       {Task.Supervisor, name: Agora.WorkflowTaskSupervisor},
+      {Task.Supervisor, name: Agora.StreamSupervisor},
       Agora.Agent.Supervisor,
       Agora.Orchestrator.RunnerSupervisor
     ]

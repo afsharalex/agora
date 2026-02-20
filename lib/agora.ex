@@ -53,6 +53,17 @@ defmodule Agora do
   end
 
   @doc """
+  Sends a message and returns a stream of incremental events.
+
+  Convenience wrapper for `Agora.Agent.stream_run/2`.
+  """
+  @spec stream_run(GenServer.server(), String.t() | Agora.Message.t()) ::
+          {:ok, Agora.Stream.t()} | {:error, Agora.Error.t()}
+  def stream_run(agent, input) do
+    Agora.Agent.stream_run(agent, input)
+  end
+
+  @doc """
   Executes a workflow DAG.
 
   See `Agora.Workflow.Executor.run/2` for options.

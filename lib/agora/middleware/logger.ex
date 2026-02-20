@@ -57,6 +57,14 @@ defmodule Agora.Middleware.Logger do
     next.(ctx)
   end
 
+  def call(%Context{hook: :on_stream_event} = ctx, next) do
+    event = ctx.stream_event
+
+    Logger.debug("[Agora.Middleware.Logger] on_stream_event: type=#{event.type}")
+
+    next.(ctx)
+  end
+
   defp inspect_content(nil), do: "nil"
   defp inspect_content(%{content: nil}), do: "nil"
   defp inspect_content(%{content: c}) when is_binary(c), do: "\"#{String.slice(c, 0..49)}...\""

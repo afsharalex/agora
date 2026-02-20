@@ -19,6 +19,7 @@ defmodule Agora.Error do
           | :memory_error
           | :orchestration_error
           | :workflow_error
+          | :streaming_error
           | :unknown
 
   @type t :: %__MODULE__{
@@ -40,6 +41,7 @@ defmodule Agora.Error do
     :memory_error,
     :orchestration_error,
     :workflow_error,
+    :streaming_error,
     :unknown
   ]
 

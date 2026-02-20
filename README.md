@@ -10,6 +10,7 @@
   <a href="#installation">Installation</a> |
   <a href="#quick-start">Quick Start</a> |
   <a href="#providers">Providers</a> |
+  <a href="#streaming">Streaming</a> |
   <a href="#middleware">Middleware</a> |
   <a href="#memory">Memory</a> |
   <a href="#orchestration">Orchestration</a> |
@@ -33,6 +34,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
 - **Memory backends** -- Bound conversation growth with ring buffers or persist history to disk across restarts
 - **Orchestration patterns** -- Single, round-robin, supervisor delegation, and chat-room multi-agent coordination
+- **Streaming** -- Real-time token streaming with `stream_run/2`, composable `Enumerable` stream, multi-turn tool execution
 - **Observability** -- Telemetry events for providers, tools, middleware, and agents; Registry-backed EventBus for pub/sub
 
 ## Installation
@@ -198,13 +200,101 @@ All providers implement the `Agora.Provider` behaviour:
 ```elixir
 @callback chat(messages :: [Message.t()], config :: AgentConfig.t()) ::
   {:ok, Message.t()} | {:error, Error.t()}
+
+# Optional -- enables stream_run/2
+@callback stream_chat(messages :: [Message.t()], config :: AgentConfig.t()) ::
+  {:ok, %{pid: pid(), ref: reference()}} | {:error, Error.t()}
 ```
 
 ### Provider-specific behavior
 
 - **Anthropic** -- System messages extracted to top-level `system` parameter. Adjacent same-role messages merged automatically. Tool results sent as `user` role with `tool_result` content blocks.
 - **OpenAI** -- System messages stay inline. Tool arguments encoded/decoded as JSON strings. One Agora tool message with N results expands to N separate OpenAI `tool` messages.
-- **Echo** -- Six configurable modes for testing (`:echo`, `:fixed`, `:sequence`, `:error`, `:tool_call`, `:function`). No HTTP calls.
+- **Echo** -- Six configurable modes for testing (`:echo`, `:fixed`, `:sequence`, `:error`, `:tool_call`, `:function`). No HTTP calls. Streaming mode adds `:stream` with explicit events, functions, and delays.
+
+## Streaming
+
+Stream tokens from the LLM as they are generated, instead of waiting for the complete response.
+
+### Basic streaming
+
+```elixir
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, stream} = Agent.stream_run(pid, "Tell me a story")
+
+# Print tokens as they arrive
+stream
+|> Stream.filter(&(&1.type == :text_delta))
+|> Enum.each(fn event -> IO.write(event.data.text) end)
+```
+
+### Collect all events
+
+```elixir
+{:ok, stream} = Agent.stream_run(pid, "Hello")
+events = Enum.to_list(stream)
+
+# Events include :text_delta, :message_complete, :done, etc.
+```
+
+### Multi-turn streaming with tools
+
+When the LLM returns tool calls during streaming, the agent automatically executes them and streams the follow-up response. Tool results are emitted as `:tool_result` events between turns.
+
+```elixir
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  tools: [Calculator]
+)
+
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, stream} = Agent.stream_run(pid, "What is 42 * 17?")
+
+Enum.each(stream, fn event ->
+  case event.type do
+    :text_delta -> IO.write(event.data.text)
+    :tool_result -> IO.puts("\n[Tool: #{event.data.name} -> #{event.data.content}]")
+    :done -> IO.puts("\n--- Done ---")
+    _ -> :ok
+  end
+end)
+```
+
+### Stream event types
+
+| Type | Data | Description |
+|------|------|-------------|
+| `:text_delta` | `%{text: "chunk"}` | Incremental text token |
+| `:tool_call_start` | `%{id: _, name: _, index: _}` | Tool call begins |
+| `:tool_call_delta` | `%{id: _, arguments_fragment: _}` | Partial JSON arguments |
+| `:tool_result` | `%ToolResult{}` | Tool execution result |
+| `:message_complete` | `%Message{}` | Accumulated complete message |
+| `:done` | `%{}` | Stream finished |
+| `:error` | `%Error{}` | Error occurred |
+
+### Middleware with streaming
+
+The `:on_stream_event` hook lets middleware intercept, transform, or suppress individual stream events:
+
+```elixir
+upcase_mw = fn ctx, next ->
+  if ctx.hook == :on_stream_event && ctx.stream_event.type == :text_delta do
+    event = ctx.stream_event
+    upper_text = String.upcase(event.data.text)
+    new_event = %{event | data: %{text: upper_text}}
+    next.(%{ctx | stream_event: new_event})
+  else
+    next.(ctx)
+  end
+end
+
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  middleware: [upcase_mw]
+)
+```
 
 ## Middleware
 
@@ -218,6 +308,7 @@ Middleware are composable interceptors that hook into the agent reasoning loop. 
 | `:after_provider_call` | After LLM response | response, tool_calls (controls execution) |
 | `:before_tool_call` | Before tool execution | tool_calls (filter/approve) |
 | `:after_tool_call` | After tool execution | tool_results |
+| `:on_stream_event` | Per streaming event | stream_event (transform/suppress) |
 
 ### Built-in middleware
 
@@ -456,6 +547,8 @@ Agora emits telemetry events at key instrumentation points via the `:telemetry` 
 | `[:agora, :orchestrator, :step]` | `:start`, `:stop` | `Agora.Orchestrator.Runner` |
 | `[:agora, :workflow, :run]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
 | `[:agora, :workflow, :step]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
+| `[:agora, :provider, :stream]` | `:start`, `:stop` | `Agora.Provider` |
+| `[:agora, :agent, :stream_run]` | `:start`, `:stop` | `Agora.Agent` |
 
 See `Agora.Telemetry` moduledoc for full measurement and metadata details per event.
 
@@ -487,6 +580,14 @@ User → Agent.run/2 → reasoning loop:
     │   [after_tool_call middleware]
     │   → loop
     └─ text only? → return {:ok, Message.t()}
+
+User → Agent.stream_run/2 → streaming loop:
+  Provider.stream_chat/3 → event stream
+    [on_stream_event middleware per event]
+    ├─ tool_calls in message?
+    │   execute tools → emit :tool_result events
+    │   → re-stream (new provider call)
+    └─ text only? → emit :done, return Agora.Stream.t()
 ```
 
 ### Core modules
@@ -514,6 +615,10 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Workflow.Builder` | DSL for constructing workflows (step, edge, sequence, parallel) |
 | `Agora.Workflow.Executor` | Stateless DAG executor with parallel fan-out, retry, checkpoints |
 | `Agora.Workflow.CheckpointStore` | Behaviour for checkpoint persistence (Memory, File backends) |
+| `Agora.StreamEvent` | Typed streaming event struct (text_delta, tool_call_start/delta, tool_result, message_complete, done, error) |
+| `Agora.Stream` | Enumerable wrapper for consuming streaming events with ownership enforcement |
+| `Agora.Provider.SSE` | Shared SSE line parser with partial-data buffering |
+| `Agora.Provider.StreamAccumulator` | Accumulates streaming deltas into a complete Message |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
 
 ### Config resolution order
@@ -553,7 +658,7 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 6 | Memory System | Complete |
 | 7 | Observability | Complete |
 | 8 | Workflow Engine | Complete |
-| 9 | Streaming Support | Planned |
+| 9 | Streaming Support | Complete |
 | 10 | Top-Level API & Release | Planned |
 
 ## Development

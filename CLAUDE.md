@@ -33,7 +33,7 @@ All LLM interaction flows through the `Agora.Provider` behaviour. Providers tran
 - **`Agora.Provider`** — Behaviour defining `chat/2` callback + resolution (`resolve/1` maps atoms like `:anthropic` to modules). `get_provider_opt/3` implements two-tier config lookup: `provider_opts` first, then application config.
 - **`Agora.Message`** — Universal message struct with role (`:system | :user | :assistant | :tool`), content, tool_calls, tool_results, metadata. Content is nilable for assistant messages that only contain tool calls.
 - **`Agora.AgentConfig`** — NimbleOptions-validated configuration. `provider_opts` keyword list carries per-agent overrides (API keys, base URLs, `req_options` for test injection).
-- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:middleware_error`, `:memory_error`, `:orchestration_error`, `:workflow_error`, `:unknown`.
+- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:middleware_error`, `:memory_error`, `:orchestration_error`, `:workflow_error`, `:streaming_error`, `:unknown`.
 - **`Agora.Config`** — Wraps `Application.get_env/3`. Convention: `api_key(:anthropic)` reads `:anthropic_api_key`.
 
 ### Provider Implementations
@@ -65,7 +65,7 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–8 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability, Workflow Engine) are complete. Next up: Phase 9 (Streaming Support) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–9 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability, Workflow Engine, Streaming Support) are complete. Next up: Phase 10 (Top-Level API, Docs & Release) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
 
 ### Memory System (Phase 6)
 
@@ -101,3 +101,19 @@ Phases 0–8 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Midd
 - Checkpoint key mapping: backends return native keys, dispatch maps string→atom via known step IDs
 - Telemetry: `[:agora, :workflow, :run]` and `[:agora, :workflow, :step]` events via `span/3`
 - `Agora.run_workflow/2` convenience function
+
+### Streaming Support (Phase 9)
+
+- `Agora.Provider` extended with optional `stream_chat/2` callback — backward compatible (providers with only `chat/2` still work)
+- `Agora.StreamEvent` — struct with 7 typed constructors: `:text_delta`, `:tool_call_start`, `:tool_call_delta`, `:tool_result`, `:message_complete`, `:done`, `:error`
+- `Agora.Stream` — Enumerable wrapper; ownership enforced (only caller can enumerate); guaranteed terminal signal
+- `Agora.Provider.SSE` — shared SSE line parser with partial-data buffering for both Anthropic and OpenAI
+- `Agora.Provider.StreamAccumulator` — accumulates text/tool_call deltas into final `Message`
+- Agent status: `:idle | :running | :streaming`; concurrent `run/2` or `stream_run/2` rejected while streaming
+- Streaming reasoning loop: relay events through `:on_stream_event` middleware, multi-turn tool execution
+- New middleware hook `:on_stream_event` for per-event interception; middleware can suppress events via `ctx.stream_event = nil`
+- Echo provider `stream_chat/2`: modes `:echo`, `:static`, `:stream` (explicit events/function/delay), `:function`, `:tool_call`, `:error`
+- Telemetry: `[:agora, :provider, :stream, :start | :stop]` and `[:agora, :agent, :stream_run, :start | :stop]` (emit-based, not span)
+- `Agora.StreamSupervisor` (Task.Supervisor) for streaming task lifecycle
+- Memory save after stream completes — failure logged + telemetry, agent transitions to `:idle` regardless
+- `Agora.stream_run/2` convenience function delegates to `Agent.stream_run/2`

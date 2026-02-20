@@ -3,8 +3,8 @@ defmodule Agora.Telemetry do
   Telemetry helpers and canonical event documentation for the Agora framework.
 
   This module provides thin wrappers around `:telemetry` functions and serves
-  as the single reference for all telemetry events emitted by Agora (23 events
-  across 9 event prefixes).
+  as the single reference for all telemetry events emitted by Agora (28 events
+  across 11 event prefixes).
 
   ## Event Reference
 
@@ -82,6 +82,36 @@ defmodule Agora.Telemetry do
   | `[:agora, :workflow, :step, :start]` | `%{monotonic_time, system_time}` | `%{step_id, step_name}` |
   | `[:agora, :workflow, :step, :stop]` | `%{duration, monotonic_time}` | `%{step_id, step_name}` + optional `:error` |
   | `[:agora, :workflow, :step, :exception]` | `%{duration, monotonic_time}` | `%{step_id, step_name, kind, reason, stacktrace}` |
+
+  ### Provider Streaming Events
+
+  Emitted by `Agora.Provider.stream_chat/3`. The `:start` event fires before
+  the streaming task is spawned. The `:stop` event fires when the streaming
+  task completes (either successfully or with error).
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:agora, :provider, :stream, :start]` | `%{system_time}` | `%{provider, model, message_count}` |
+  | `[:agora, :provider, :stream, :stop]` | `%{duration}` | `%{provider, model, message_count}` + optional `:error` |
+
+  ### Agent Streaming Events
+
+  Emitted by `Agora.Agent` for `stream_run/2` operations. Uses manual
+  `:telemetry.execute/3` calls (same pattern as `run/2` events).
+
+  Note: `[:agora, :agent, :loop_iteration, ...]` events are NOT emitted during
+  streaming — the streaming loop structure differs from the synchronous
+  `reasoning_loop`.
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:agora, :agent, :stream_run, :start]` | `%{system_time}` | `%{provider, model, agent_name, max_iterations}` |
+  | `[:agora, :agent, :stream_run, :stop]` | `%{duration, iterations}` | `%{provider, model, agent_name, max_iterations}` + optional `:error` |
+  | `[:agora, :agent, :stream_run, :memory_error]` | `%{system_time}` | `%{error}` |
+
+  The `:memory_error` event fires when memory save or reload fails after a streaming
+  run completes. The stream has already been closed (`:done` sent to caller), so this
+  error cannot be communicated via the stream. The agent transitions to `:idle` regardless.
   """
 
   @doc """

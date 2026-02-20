@@ -490,24 +490,79 @@ DAG-based workflow execution for deterministic multi-step pipelines.
 
 ---
 
-## Phase 9: Streaming Support
+## Phase 9: Streaming Support ✅
 
 Real-time token streaming from providers through the agent to callers.
 
 ### Provider Streaming
 
-- [ ] Extend `Agora.Provider` behaviour with `stream_chat/2` callback
-  - [ ] Return `Stream.t()` of delta events
-- [ ] `Agora.Provider.Anthropic` streaming via SSE
-- [ ] `Agora.Provider.OpenAI` streaming via SSE
-- [ ] Accumulator that assembles deltas into final `Message`
+- [x] Extend `Agora.Provider` behaviour with optional `stream_chat/2` callback
+  - [x] Returns `{:ok, %{pid: pid(), ref: reference()}}` — process-based streaming
+  - [x] Backward compatible: providers with only `chat/2` still resolve; `stream_run/2` returns typed `:streaming_error`
+- [x] `Agora.Provider.Anthropic` streaming via SSE (message_start, content_block_start/delta/stop, message_delta, message_stop)
+- [x] `Agora.Provider.OpenAI` streaming via SSE (choices[0].delta, tool_calls, [DONE] marker)
+- [x] `Agora.Provider.SSE` — shared SSE line parser with partial-data buffering
+- [x] `Agora.Provider.StreamAccumulator` — assembles text/tool_call deltas into final `Message`
+
+### Stream Event Types
+
+- [x] `Agora.StreamEvent` — struct with 7 typed constructors:
+  - `:text_delta` — `%{text: "chunk"}`
+  - `:tool_call_start` — `%{id: "toolu_123", name: "calc", index: 0}`
+  - `:tool_call_delta` — `%{id: "toolu_123", arguments_fragment: "{\"a\":"}`
+  - `:tool_result` — `%ToolResult{}`
+  - `:message_complete` — `%Message{}` (accumulated assistant message)
+  - `:done` — `%{}`
+  - `:error` — `%Error{}`
 
 ### Agent Streaming
 
-- [ ] `Agora.Agent.stream_run/2` — returns a stream/process that emits events as they arrive
-- [ ] Define event types: `:text_delta`, `:tool_call_start`, `:tool_call_delta`, `:tool_result`, `:done`, `:error`
-- [ ] Wire middleware hooks for streaming events
-- [ ] Tests with Echo provider emitting simulated stream events
+- [x] `Agora.Agent.stream_run/2` — returns `{:ok, Agora.Stream.t()}` (Enumerable wrapper)
+- [x] `Agora.Stream` — Enumerable protocol implementation with process-based event delivery
+  - [x] Stream ownership: only the caller process that invoked `stream_run/2` can enumerate
+  - [x] Composable with `Stream.filter/2`, `Stream.take/2`, `Enum.to_list/1`, etc.
+  - [x] Guaranteed terminal signal: `:done` or `:error` always delivered (provider crash → synthesized error)
+- [x] Agent status extended: `:idle | :running | :streaming`
+  - [x] Concurrent `run/2` or `stream_run/2` rejected while streaming
+- [x] Streaming reasoning loop: multi-turn tool execution with event relay
+  - [x] Accumulate deltas → detect tool calls → execute tools → emit `:tool_result` events → re-stream
+- [x] Memory save after stream completes (failure logged + telemetry, agent transitions to :idle)
+
+### Middleware
+
+- [x] New `:on_stream_event` hook — per-event interception for logging, filtering, transformation
+- [x] Middleware can suppress events by setting `ctx.stream_event = nil`
+- [x] Existing 4 hooks fire at loop boundaries on accumulated messages (same as sync `run/2`)
+- [x] Logger middleware updated with `:on_stream_event` clause
+
+### Echo Provider Streaming
+
+- [x] `stream_chat/2` with multiple modes: `:echo`, `:static`, `:stream`, `:function`, `:tool_call`, `:error`
+- [x] Configurable via `echo_stream_events`, `echo_stream_function`, `echo_stream_delay`
+
+### Telemetry
+
+- [x] `[:agora, :provider, :stream, :start | :stop]` — provider streaming events
+- [x] `[:agora, :agent, :stream_run, :start | :stop]` — agent streaming lifecycle
+- [x] 28 total events across 11 event prefixes (updated from 23 events / 9 prefixes)
+
+### Supervision
+
+- [x] `Agora.StreamSupervisor` (Task.Supervisor) added to application supervision tree
+- [x] Streaming tasks supervised; crash cleanup via `:DOWN` monitor
+
+### Testing
+
+- [x] StreamEvent struct tests (constructors, Jason encoding)
+- [x] Agora.Stream Enumerable tests (to_list, done/error termination, take, filter, crash recovery, wrong-process)
+- [x] SSE parser tests (single/multiple events, buffering, comment lines, line endings, Anthropic/OpenAI format)
+- [x] StreamAccumulator tests (text accumulation, tool calls, to_message, JSON decode)
+- [x] Echo stream tests (echo/static/stream/tool_call/error modes)
+- [x] Anthropic stream tests (text streaming, tool use, auth error, HTTP error)
+- [x] OpenAI stream tests (text streaming, tool calls, auth via 401, HTTP error)
+- [x] Agent stream tests (basic streaming, status, concurrency rejection, persistence, iteration limit, error propagation, middleware hooks, Logger compat, telemetry, custom provider, ownership)
+- [x] Agent stream integration tests (multi-turn tool loop, middleware event modification, Enumerable API, event suppression)
+- [x] 788 total tests (83 new), 0 failures
 
 ---
 
@@ -616,11 +671,16 @@ lib/agora/
 ├── tool_result.ex                     # Phase 0
 ├── agent_config.ex                    # Phase 0
 │
+├── stream_event.ex                       # Phase 9
+├── stream.ex                             # Phase 9
+│
 ├── provider/
 │   ├── provider.ex                    # Phase 1 (behaviour)
 │   ├── echo.ex                        # Phase 1
 │   ├── anthropic.ex                   # Phase 1
-│   └── openai.ex                      # Phase 1
+│   ├── openai.ex                      # Phase 1
+│   ├── sse.ex                         # Phase 9
+│   └── stream_accumulator.ex          # Phase 9
 │
 ├── tool/
 │   ├── tool.ex                        # Phase 2 (behaviour)

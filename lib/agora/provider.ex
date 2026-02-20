@@ -20,6 +20,11 @@ defmodule Agora.Provider do
 
   @callback chat([Message.t()], AgentConfig.t()) :: {:ok, Message.t()} | {:error, Error.t()}
 
+  @callback stream_chat([Message.t()], AgentConfig.t()) ::
+              {:ok, %{pid: pid(), ref: reference()}} | {:error, Error.t()}
+
+  @optional_callbacks [stream_chat: 2]
+
   @known_providers %{
     echo: Agora.Provider.Echo,
     anthropic: Agora.Provider.Anthropic,
@@ -82,6 +87,47 @@ defmodule Agora.Provider do
 
         {result, stop_meta}
       end)
+    end
+  end
+
+  @doc """
+  Convenience function that resolves a provider and delegates to `stream_chat/2`.
+
+  Returns `{:ok, %{pid, ref}}` on success. Returns a `:streaming_error` if the
+  provider does not implement `stream_chat/2`.
+  """
+  @spec stream_chat(atom(), [Message.t()], AgentConfig.t()) ::
+          {:ok, %{pid: pid(), ref: reference()}} | {:error, Error.t()}
+  def stream_chat(provider, messages, %AgentConfig{} = config) do
+    with {:ok, mod} <- resolve(provider) do
+      Code.ensure_loaded!(mod)
+
+      if function_exported?(mod, :stream_chat, 2) do
+        meta = %{provider: provider, model: config.model, message_count: length(messages)}
+        start_time = System.monotonic_time()
+
+        Agora.Telemetry.emit(
+          [:agora, :provider, :stream, :start],
+          %{system_time: System.system_time()},
+          meta
+        )
+
+        case mod.stream_chat(messages, config) do
+          {:ok, stream_info} ->
+            {:ok, stream_info}
+
+          {:error, error} = err ->
+            Agora.Telemetry.emit(
+              [:agora, :provider, :stream, :stop],
+              %{duration: System.monotonic_time() - start_time},
+              Map.put(meta, :error, error)
+            )
+
+            err
+        end
+      else
+        Error.wrap(:streaming_error, "Provider #{inspect(provider)} does not support streaming")
+      end
     end
   end
 
