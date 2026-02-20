@@ -32,79 +32,79 @@ Prerequisite for all other changes. Refactor existing edge-appending code to use
 
 ### 3. `step_defaults` on `Builder.new/1`
 
-- [ ] **3.1** Add `step_defaults` field to Builder struct (default: `[]`)
-- [ ] **3.2** Add `new/1` accepting `step_defaults:` keyword option (keep `new/0` unchanged)
-- [ ] **3.3** Validate `step_defaults` allowlist — only `:timeout` and `:retry` accepted, all other keys → error
-- [ ] **3.4** Merge `step_defaults` under per-step opts in `step/4` (`Keyword.merge(defaults, step_opts)`)
-- [ ] **3.5** Tests: `new(step_defaults: [timeout: 30_000])` stores defaults on struct
-- [ ] **3.6** Tests: per-step opts override defaults
-- [ ] **3.7** Tests: `new()` (0-arity) still works
-- [ ] **3.8** Tests: non-allowed keys in defaults → error (e.g., `:name`, `:inputs`)
-- [ ] **3.9** Tests: wiring keys in defaults → error (`:after`, `:when`, `:condition`)
+- [x] **3.1** Add `step_defaults` field to Builder struct (default: `[]`)
+- [x] **3.2** Add `new/1` accepting `step_defaults:` keyword option (keep `new/0` unchanged)
+- [x] **3.3** Validate `step_defaults` allowlist — only `:timeout` and `:retry` accepted, all other keys → error
+- [x] **3.4** Merge `step_defaults` under per-step opts in `step/4` (`Keyword.merge(defaults, step_opts)`)
+- [x] **3.5** Tests: `new(step_defaults: [timeout: 30_000])` stores defaults on struct
+- [x] **3.6** Tests: per-step opts override defaults
+- [x] **3.7** Tests: `new()` (0-arity) still works
+- [x] **3.8** Tests: non-allowed keys in defaults → error (e.g., `:name`, `:inputs`)
+- [x] **3.9** Tests: wiring keys in defaults → error (`:after`, `:when`, `:condition`)
 
 ### 4. `after:` alias for `inputs:`
 
-- [ ] **4.1** In `step/4`, normalize `after:` to `inputs:` — atom coerced to `[atom]`
-- [ ] **4.2** Validate `after:` and `inputs:` are mutually exclusive → error if both present
-- [ ] **4.3** Remove `after:` from opts before passing to `Step.new/1`
-- [ ] **4.4** Tests: `after: :atom` normalizes to `inputs: [:atom]`
-- [ ] **4.5** Tests: `after: [:a, :b]` normalizes to `inputs: [:a, :b]`
-- [ ] **4.6** Tests: `after:` + `inputs:` together → error
-- [ ] **4.7** Tests: auto-edge generation works with `after:`-defined inputs
-- [ ] **4.8** Tests: `inputs:` continues to work unchanged
+- [x] **4.1** In `step/4`, normalize `after:` to `inputs:` — atom coerced to `[atom]`
+- [x] **4.2** Validate `after:` and `inputs:` are mutually exclusive → error if both present
+- [x] **4.3** Remove `after:` from opts before passing to `Step.new/1`
+- [x] **4.4** Tests: `after: :atom` normalizes to `inputs: [:atom]`
+- [x] **4.5** Tests: `after: [:a, :b]` normalizes to `inputs: [:a, :b]`
+- [x] **4.6** Tests: `after:` + `inputs:` together → error
+- [x] **4.7** Tests: auto-edge generation works with `after:`-defined inputs
+- [x] **4.8** Tests: `inputs:` continues to work unchanged
 
 ### 5. `condition:`/`when:` inline conditional edges
 
-- [ ] **5.1** In `step/4`, normalize `when:` to `condition:`
-- [ ] **5.2** Validate `condition:` and `when:` are mutually exclusive → error if both present
-- [ ] **5.3** Validate `condition:` requires a dependency (`after:` or `inputs:`) → error if absent
-- [ ] **5.4** Validate `condition:` with multi-element dependency list → error
-- [ ] **5.5** When single dependency + `condition:` present: remove from opts, generate explicit edge via `add_edge/2`
-- [ ] **5.6** Tests: single `after:` + `condition:` generates conditional edge
-- [ ] **5.7** Tests: single `after:` + `when:` generates conditional edge (alias)
-- [ ] **5.8** Tests: single `inputs:` + `condition:` generates conditional edge (legacy style)
-- [ ] **5.9** Tests: `after: [:a]` (single-element list) + `condition:` → works
-- [ ] **5.10** Tests: `condition:` without any dependency → error
-- [ ] **5.11** Tests: `when:` without any dependency → error
-- [ ] **5.12** Tests: `condition:` + `when:` together → error
-- [ ] **5.13** Tests: multi-element `after:` + `condition:` → error
-- [ ] **5.14** Tests: multi-element `inputs:` + `condition:` → error
-- [ ] **5.15** Tests: conditional edge suppresses auto-edge for same `{from, to}` in `merge_input_edges/1` (no error, pre-filter handles it)
-- [ ] **5.16** Tests: condition function evaluated correctly by executor (integration test)
+- [x] **5.1** In `step/4`, normalize `when:` to `condition:`
+- [x] **5.2** Validate `condition:` and `when:` are mutually exclusive → error if both present
+- [x] **5.3** Validate `condition:` requires a dependency (`after:` or `inputs:`) → error if absent
+- [x] **5.4** Validate `condition:` with multi-element dependency list → error
+- [x] **5.5** When single dependency + `condition:` present: remove from opts, generate explicit edge via `add_edge/2`
+- [x] **5.6** Tests: single `after:` + `condition:` generates conditional edge
+- [x] **5.7** Tests: single `after:` + `when:` generates conditional edge (alias)
+- [x] **5.8** Tests: single `inputs:` + `condition:` generates conditional edge (legacy style)
+- [x] **5.9** Tests: `after: [:a]` (single-element list) + `condition:` → works
+- [x] **5.10** Tests: `condition:` without any dependency → error
+- [x] **5.11** Tests: `when:` without any dependency → error
+- [x] **5.12** Tests: `condition:` + `when:` together → error
+- [x] **5.13** Tests: multi-element `after:` + `condition:` → error
+- [x] **5.14** Tests: multi-element `inputs:` + `condition:` → error
+- [x] **5.15** Tests: conditional edge suppresses auto-edge for same `{from, to}` in `merge_input_edges/1` (no error, pre-filter handles it)
+- [x] **5.16** Tests: condition function evaluated correctly by executor (integration test)
 
 ### 6. `Builder.chain/2`
 
-- [ ] **6.1** Implement `chain/2` — iterate tuples calling `step/4`, then `sequence/2` on IDs
-- [ ] **6.2** Support 2-tuple `{id, handler}` and 3-tuple `{id, handler, opts}` formats
-- [ ] **6.3** Validate tuple opts do not contain wiring keys (`:after`, `:inputs`, `:when`, `:condition`) → error
-- [ ] **6.4** Tests: 2-tuple defines step correctly
-- [ ] **6.5** Tests: 3-tuple defines step with opts (e.g., `:retry`, `:timeout`)
-- [ ] **6.6** Tests: linear edges generated between consecutive steps
-- [ ] **6.7** Tests: wiring keys in tuple opts → error
-- [ ] **6.8** Tests: `step_defaults` applied to chain steps
-- [ ] **6.9** Tests: duplicate step ID within chain → error
-- [ ] **6.10** Tests: empty list → no-op (builder unchanged)
-- [ ] **6.11** Tests: single-element list → step defined, no edges
-- [ ] **6.12** Tests: `chain/2` followed by `chain/2` with overlapping adjacency → error
+- [x] **6.1** Implement `chain/2` — iterate tuples calling `step/4`, then `sequence/2` on IDs
+- [x] **6.2** Support 2-tuple `{id, handler}` and 3-tuple `{id, handler, opts}` formats
+- [x] **6.3** Validate tuple opts do not contain wiring keys (`:after`, `:inputs`, `:when`, `:condition`) → error
+- [x] **6.4** Tests: 2-tuple defines step correctly
+- [x] **6.5** Tests: 3-tuple defines step with opts (e.g., `:retry`, `:timeout`)
+- [x] **6.6** Tests: linear edges generated between consecutive steps
+- [x] **6.7** Tests: wiring keys in tuple opts → error
+- [x] **6.8** Tests: `step_defaults` applied to chain steps
+- [x] **6.9** Tests: duplicate step ID within chain → error
+- [x] **6.10** Tests: empty list → no-op (builder unchanged)
+- [x] **6.11** Tests: single-element list → step defined, no edges
+- [x] **6.12** Tests: `chain/2` followed by `chain/2` with overlapping adjacency → error
 
 ### 7. Documentation
 
-- [ ] **7.1** Update `Builder` `@moduledoc` with `after:`, `chain/2`, `step_defaults`, `condition:` examples
-- [ ] **7.2** Add `@doc` for `new/1` and `chain/2`
-- [ ] **7.3** Update `step/4` `@doc` with new options
-- [ ] **7.4** Update `guides/workflows.md` — add "Builder Sugar" section showing `import` pattern, `after:`, `chain/2`, defaults, inline conditions
-- [ ] **7.5** Update `examples/workflow.exs` to use `after:` or `chain/2` where it improves clarity
-- [ ] **7.6** Verify `mix docs` builds cleanly
-- [ ] **7.7** Verify `mix format --check-formatted` passes
+- [x] **7.1** Update `Builder` `@moduledoc` with `after:`, `chain/2`, `step_defaults`, `condition:` examples
+- [x] **7.2** Add `@doc` for `new/1` and `chain/2`
+- [x] **7.3** Update `step/4` `@doc` with new options
+- [x] **7.4** Update `guides/workflows.md` — add "Builder Sugar" section showing `after:`, `chain/2`, defaults, inline conditions
+- [x] **7.5** Update `examples/workflow.exs` to use `after:` where it improves clarity
+- [x] **7.6** Verify `mix docs` builds cleanly
+- [x] **7.7** Verify `mix format --check-formatted` passes
 
 ### 8. Final verification
 
-- [ ] **8.1** All existing Builder tests pass (backward compatibility)
-- [ ] **8.2** `mix compile --warnings-as-errors`
-- [ ] **8.3** `mix test` — all tests pass
-- [ ] **8.4** `mix format --check-formatted`
-- [ ] **8.5** `mix docs` builds cleanly
-- [ ] **8.6** `mix hex.build` succeeds
+- [x] **8.1** All existing Builder tests pass (backward compatibility)
+- [x] **8.2** `mix compile --warnings-as-errors`
+- [x] **8.3** `mix test` — all tests pass (846 tests, 0 failures)
+- [x] **8.4** `mix format --check-formatted`
+- [x] **8.5** `mix docs` builds cleanly
+- [x] **8.6** `mix hex.build` succeeds
 
 ---
 
