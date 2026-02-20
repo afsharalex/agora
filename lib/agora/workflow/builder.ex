@@ -199,14 +199,26 @@ defmodule Agora.Workflow.Builder do
   defp normalize_step_opts(opts) do
     has_after = Keyword.has_key?(opts, :after)
     has_inputs = Keyword.has_key?(opts, :inputs)
+    has_condition = Keyword.has_key?(opts, :condition)
+    has_when = Keyword.has_key?(opts, :when)
 
-    if has_after and has_inputs do
-      {:error, Error.new(:workflow_error, "Cannot specify both :after and :inputs")}
-    else
-      opts = normalize_after_to_inputs(opts, has_after)
-      {:ok, opts, nil}
+    with :ok <- validate_after_inputs_exclusive(has_after, has_inputs),
+         :ok <- validate_condition_when_exclusive(has_condition, has_when),
+         opts <- normalize_after_to_inputs(opts, has_after),
+         {:ok, opts, condition_info} <- extract_condition(opts, has_condition or has_when) do
+      {:ok, opts, condition_info}
     end
   end
+
+  defp validate_after_inputs_exclusive(true, true),
+    do: {:error, Error.new(:workflow_error, "Cannot specify both :after and :inputs")}
+
+  defp validate_after_inputs_exclusive(_, _), do: :ok
+
+  defp validate_condition_when_exclusive(true, true),
+    do: {:error, Error.new(:workflow_error, "Cannot specify both :condition and :when")}
+
+  defp validate_condition_when_exclusive(_, _), do: :ok
 
   defp normalize_after_to_inputs(opts, false), do: opts
 
@@ -214,6 +226,34 @@ defmodule Agora.Workflow.Builder do
     after_val = opts[:after]
     inputs = if is_atom(after_val), do: [after_val], else: after_val
     opts |> Keyword.delete(:after) |> Keyword.put(:inputs, inputs)
+  end
+
+  defp extract_condition(opts, false), do: {:ok, opts, nil}
+
+  defp extract_condition(opts, true) do
+    condition_fn = opts[:condition] || opts[:when]
+    inputs = opts[:inputs] || []
+
+    cond do
+      inputs == [] ->
+        {:error,
+         Error.new(
+           :workflow_error,
+           ":condition/:when requires a single :after or :inputs dependency"
+         )}
+
+      length(inputs) > 1 ->
+        {:error,
+         Error.new(
+           :workflow_error,
+           ":condition/:when with multiple dependencies is not supported; use edge/4"
+         )}
+
+      true ->
+        [from] = inputs
+        cleaned = opts |> Keyword.delete(:condition) |> Keyword.delete(:when)
+        {:ok, cleaned, {from, condition_fn}}
+    end
   end
 
   defp maybe_add_condition_edge(builder, _id, nil), do: builder

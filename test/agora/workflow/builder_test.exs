@@ -486,6 +486,134 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "condition:/when: inline edges" do
+    test "after: + condition: generates conditional edge" do
+      cond_fn = fn _r -> true end
+
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: :a, condition: cond_fn)
+
+      assert length(builder.edges) == 1
+      [edge] = builder.edges
+      assert edge.from == :a
+      assert edge.to == :b
+      assert edge.condition == cond_fn
+    end
+
+    test "after: + when: generates conditional edge (alias)" do
+      cond_fn = fn _r -> true end
+
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: :a, when: cond_fn)
+
+      assert length(builder.edges) == 1
+      [edge] = builder.edges
+      assert edge.condition == cond_fn
+    end
+
+    test "inputs: + condition: generates conditional edge" do
+      cond_fn = fn _r -> true end
+
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, inputs: [:a], condition: cond_fn)
+
+      assert length(builder.edges) == 1
+      [edge] = builder.edges
+      assert edge.from == :a
+      assert edge.to == :b
+      assert edge.condition == cond_fn
+    end
+
+    test "single-element list after: + condition: works" do
+      cond_fn = fn _r -> true end
+
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: [:a], condition: cond_fn)
+
+      assert length(builder.edges) == 1
+      [edge] = builder.edges
+      assert edge.from == :a
+      assert edge.to == :b
+      assert edge.condition == cond_fn
+    end
+
+    test "condition: without dependency produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1, condition: fn _r -> true end)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "requires a single :after or :inputs"
+    end
+
+    test "when: without dependency produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1, when: fn _r -> true end)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "requires a single :after or :inputs"
+    end
+
+    test "condition: + when: together produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1,
+          after: :a,
+          condition: fn _r -> true end,
+          when: fn _r -> true end
+        )
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "both :condition and :when"
+    end
+
+    test "multi-element after: + condition: produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.step(:c, &handler/1, after: [:a, :b], condition: fn _r -> true end)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "multiple dependencies"
+    end
+
+    test "multi-element inputs: + condition: produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.step(:c, &handler/1, inputs: [:a, :b], condition: fn _r -> true end)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "multiple dependencies"
+    end
+
+    test "conditional edge suppresses auto-edge for same pair" do
+      cond_fn = fn _r -> true end
+
+      assert {:ok, workflow} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1, after: :a, condition: cond_fn)
+               |> Builder.build()
+
+      assert length(workflow.edges) == 1
+      [edge] = workflow.edges
+      assert edge.condition == cond_fn
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =

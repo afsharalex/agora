@@ -212,6 +212,35 @@ defmodule Agora.Workflow.ExecutorTest do
       assert results[:b] == :skipped
     end
 
+    test "inline condition: on step — condition true runs step" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 10} end)
+        |> Builder.step(:b, fn r -> {:ok, elem(r[:a], 1) + 5} end,
+          after: :a,
+          condition: fn r -> elem(r[:a], 1) > 5 end
+        )
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      assert results[:b] == {:ok, 15}
+    end
+
+    test "inline condition: on step — condition false skips step" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 2} end)
+        |> Builder.step(:b, fn _r -> {:ok, "should not run"} end,
+          after: :a,
+          condition: fn r -> elem(r[:a], 1) > 5 end
+        )
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      assert results[:a] == {:ok, 2}
+      assert results[:b] == :skipped
+    end
+
     test "all conditions false: step and downstream skipped" do
       workflow =
         Builder.new()
