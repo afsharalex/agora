@@ -429,6 +429,63 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "after: alias" do
+    test "after: atom normalizes to inputs: [atom]" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: :a)
+
+      assert builder.steps[:b].inputs == [:a]
+    end
+
+    test "after: list normalizes to inputs: list" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.step(:c, &handler/1, after: [:a, :b])
+
+      assert builder.steps[:c].inputs == [:a, :b]
+    end
+
+    test "after: and inputs: together produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1, after: :a, inputs: [:a])
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "both :after and :inputs"
+    end
+
+    test "auto-edge generation works with after:" do
+      assert {:ok, workflow} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1, after: :a)
+               |> Builder.build()
+
+      assert length(workflow.edges) == 1
+      [edge] = workflow.edges
+      assert edge.from == :a
+      assert edge.to == :b
+    end
+
+    test "inputs: continues to work unchanged" do
+      assert {:ok, workflow} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1, inputs: [:a])
+               |> Builder.build()
+
+      assert length(workflow.edges) == 1
+      [edge] = workflow.edges
+      assert edge.from == :a
+      assert edge.to == :b
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =

@@ -197,7 +197,23 @@ defmodule Agora.Workflow.Builder do
   # --- Private: Step option normalization ---
 
   defp normalize_step_opts(opts) do
-    {:ok, opts, nil}
+    has_after = Keyword.has_key?(opts, :after)
+    has_inputs = Keyword.has_key?(opts, :inputs)
+
+    if has_after and has_inputs do
+      {:error, Error.new(:workflow_error, "Cannot specify both :after and :inputs")}
+    else
+      opts = normalize_after_to_inputs(opts, has_after)
+      {:ok, opts, nil}
+    end
+  end
+
+  defp normalize_after_to_inputs(opts, false), do: opts
+
+  defp normalize_after_to_inputs(opts, true) do
+    after_val = opts[:after]
+    inputs = if is_atom(after_val), do: [after_val], else: after_val
+    opts |> Keyword.delete(:after) |> Keyword.put(:inputs, inputs)
   end
 
   defp maybe_add_condition_edge(builder, _id, nil), do: builder
