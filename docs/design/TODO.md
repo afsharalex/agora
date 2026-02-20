@@ -26,9 +26,9 @@ Prerequisite for all other changes. Refactor existing edge-appending code to use
 
 ### 2. Duplicate step ID detection
 
-- [ ] **2.1** Add duplicate ID check in `step/4` — error if `id` already in `builder.steps`
-- [ ] **2.2** Tests: duplicate step ID via `step/4` → error
-- [ ] **2.3** Tests: non-duplicate steps still work as before
+- [x] **2.1** Add duplicate ID check in `step/4` — error if `id` already in `builder.steps`
+- [x] **2.2** Tests: duplicate step ID via `step/4` → error
+- [x] **2.3** Tests: non-duplicate steps still work as before
 
 ### 3. `step_defaults` on `Builder.new/1`
 

@@ -297,6 +297,29 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "duplicate step detection" do
+    test "duplicate step ID via step/4 produces error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1, name: "first")
+        |> Builder.step(:a, &handler/1, name: "second")
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.type == :workflow_error
+      assert error.message =~ "already exists"
+      # Original step preserved, not overwritten
+      assert builder.steps[:a].name == "first"
+    end
+
+    test "non-duplicate steps work as before" do
+      assert {:ok, _workflow} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1, [])
+               |> Builder.step(:b, &handler/1, [])
+               |> Builder.build()
+    end
+  end
+
   describe "duplicate edge detection" do
     test "duplicate edge via edge/4 produces error" do
       assert {:error, error} =

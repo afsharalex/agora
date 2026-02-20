@@ -56,12 +56,17 @@ defmodule Agora.Workflow.Builder do
   """
   @spec step(t(), atom(), Step.handler(), keyword()) :: t()
   def step(%__MODULE__{} = builder, id, handler, opts \\ []) do
-    case Step.new(Keyword.merge(opts, id: id, handler: handler)) do
-      {:ok, step} ->
-        %{builder | steps: Map.put(builder.steps, id, step)}
+    if Map.has_key?(builder.steps, id) do
+      error = Error.new(:workflow_error, "Step #{inspect(id)} already exists")
+      %{builder | errors: [error | builder.errors]}
+    else
+      case Step.new(Keyword.merge(opts, id: id, handler: handler)) do
+        {:ok, step} ->
+          %{builder | steps: Map.put(builder.steps, id, step)}
 
-      {:error, error} ->
-        %{builder | errors: [error | builder.errors]}
+        {:error, error} ->
+          %{builder | errors: [error | builder.errors]}
+      end
     end
   end
 
