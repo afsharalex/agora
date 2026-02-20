@@ -29,8 +29,20 @@ defmodule Agora.Middleware.Chain do
   def run([], context), do: {:ok, context}
 
   def run(middleware, context) do
-    chain = compose(middleware)
-    chain.(context)
+    meta = %{hook: context.hook, middleware_count: length(middleware)}
+
+    Agora.Telemetry.span([:agora, :middleware, :call], meta, fn ->
+      chain = compose(middleware)
+      result = chain.(context)
+
+      stop_meta =
+        case result do
+          {:ok, _ctx} -> meta
+          {:halt, reason} -> Map.put(meta, :halt_reason, inspect(reason))
+        end
+
+      {result, stop_meta}
+    end)
   end
 
   defp compose(middleware) do

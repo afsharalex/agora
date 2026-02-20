@@ -49,6 +49,9 @@ defmodule Agora.Agent do
 
   @type status :: :idle | :running
 
+  @messages_key :agora_agent_loop_messages
+  @run_start_key :agora_agent_run_start
+
   @doc """
   Starts an agent process.
 
@@ -180,8 +183,11 @@ defmodule Agora.Agent do
     )
 
     start_time = System.monotonic_time()
+    Process.put(@run_start_key, start_time)
 
     {result, final_state} = safe_reasoning_loop(messages, state)
+
+    Process.delete(@run_start_key)
 
     # Memory save + reload — after loop, before telemetry/reply
     {result, final_state} = memory_save_and_reload(result, final_state)
@@ -267,8 +273,6 @@ defmodule Agora.Agent do
 
   # --- Private: Safe wrapper ---
 
-  @messages_key :agora_agent_loop_messages
-
   defp safe_reasoning_loop(messages, state) do
     Process.put(@messages_key, messages)
 
@@ -283,7 +287,9 @@ defmodule Agora.Agent do
     end
   catch
     kind, reason ->
+      stacktrace = __STACKTRACE__
       recovered_messages = Process.delete(@messages_key) || messages
+      run_start = Process.delete(@run_start_key) || System.monotonic_time()
 
       error =
         Error.new(
@@ -291,6 +297,17 @@ defmodule Agora.Agent do
           format_crash(kind, reason),
           %{kind: to_string(kind), reason: format_crash_reason(reason)}
         )
+
+      Agora.Telemetry.emit(
+        [:agora, :agent, :run, :exception],
+        %{duration: System.monotonic_time() - run_start},
+        telemetry_metadata(state.config)
+        |> Map.merge(%{
+          kind: kind,
+          reason: format_crash_reason(reason),
+          stacktrace: stacktrace |> Exception.format_stacktrace() |> String.slice(0, 1000)
+        })
+      )
 
       {{:error, error}, %{state | messages: recovered_messages}}
   end

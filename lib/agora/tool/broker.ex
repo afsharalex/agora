@@ -65,38 +65,54 @@ defmodule Agora.ToolBroker do
     tasks =
       Enum.map(tool_calls, fn tool_call ->
         timeout = resolve_timeout(tool_call.name, tool_map)
+        meta = %{tool_name: tool_call.name, tool_call_id: tool_call.id}
+
+        Agora.Telemetry.emit(
+          [:agora, :tool, :call, :start],
+          %{system_time: System.system_time()},
+          meta
+        )
 
         task =
           Task.Supervisor.async_nolink(supervisor, fn ->
             execute_single(tool_call, tool_map, context, validate?)
           end)
 
-        {task, tool_call, timeout}
+        {task, tool_call, timeout, meta, System.monotonic_time()}
       end)
 
     results =
-      Enum.map(tasks, fn {task, tool_call, timeout} ->
+      Enum.map(tasks, fn {task, tool_call, timeout, meta, tool_start} ->
         elapsed = System.monotonic_time(:millisecond) - start_time
         remaining = max(timeout - elapsed, 0)
 
-        case Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill) do
-          {:ok, result} ->
-            result
+        {result, status} =
+          case Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill) do
+            {:ok, result} ->
+              {result, if(result.is_error, do: :error, else: :ok)}
 
-          {:exit, reason} ->
-            ToolResult.error(
-              tool_call.id,
-              tool_call.name,
-              "Tool process exited: #{inspect(reason)}"
-            )
+            {:exit, reason} ->
+              {ToolResult.error(
+                 tool_call.id,
+                 tool_call.name,
+                 "Tool process exited: #{inspect(reason)}"
+               ), :exit}
 
-          nil ->
-            ToolResult.error(
-              tool_call.id,
-              tool_call.name,
-              "Tool execution timed out after #{timeout}ms"
-            )
-        end
+            nil ->
+              {ToolResult.error(
+                 tool_call.id,
+                 tool_call.name,
+                 "Tool execution timed out after #{timeout}ms"
+               ), :timeout}
+          end
+
+        Agora.Telemetry.emit(
+          [:agora, :tool, :call, :stop],
+          %{duration: System.monotonic_time() - tool_start},
+          Map.put(meta, :status, status)
+        )
+
+        result
       end)
 
     {:ok, results}
@@ -125,31 +141,40 @@ defmodule Agora.ToolBroker do
         ToolResult.error(tool_call.id, tool_call.name, message)
     end
   catch
-    :exit, reason ->
-      ToolResult.error(
-        tool_call.id,
-        tool_call.name,
-        "Tool exited: #{inspect(reason)}"
+    kind, reason ->
+      Agora.Telemetry.emit(
+        [:agora, :tool, :call, :exception],
+        %{duration: 0},
+        %{
+          tool_name: tool_call.name,
+          tool_call_id: tool_call.id,
+          kind: kind,
+          reason: format_catch_reason(kind, reason)
+        }
       )
-
-    :throw, value ->
-      ToolResult.error(
-        tool_call.id,
-        tool_call.name,
-        "Tool threw: #{inspect(value)}"
-      )
-
-    :error, exception ->
-      message =
-        if is_exception(exception),
-          do: Exception.message(exception),
-          else: inspect(exception)
 
       ToolResult.error(
         tool_call.id,
         tool_call.name,
-        "Tool raised: #{message}"
+        format_catch_message(kind, reason)
       )
+  end
+
+  defp format_catch_reason(:error, exception) when is_exception(exception),
+    do: Exception.message(exception)
+
+  defp format_catch_reason(_kind, reason), do: inspect(reason)
+
+  defp format_catch_message(:exit, reason), do: "Tool exited: #{inspect(reason)}"
+  defp format_catch_message(:throw, value), do: "Tool threw: #{inspect(value)}"
+
+  defp format_catch_message(:error, exception) do
+    message =
+      if is_exception(exception),
+        do: Exception.message(exception),
+        else: inspect(exception)
+
+    "Tool raised: #{message}"
   end
 
   defp build_tool_map(tools) do

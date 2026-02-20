@@ -65,7 +65,7 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–6 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System) are complete. Next up: Phase 7 (Observability) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–7 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System, Observability) are complete. Next up: Phase 8 (Workflow Engine) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
 
 ### Memory System (Phase 6)
 
@@ -76,3 +76,13 @@ Phases 0–6 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Midd
 - Save at run boundaries (after reasoning loop, before telemetry) — fatal on failure
 - `Agent.clear_memory/1` API; `:transient` restart when memory configured
 - Module validation via `Code.ensure_loaded/1` + `function_exported?/3` at init
+
+### Observability (Phase 7)
+
+- `Agora.Telemetry` — helper module with `span/3` and `emit/3` wrappers; canonical event documentation in `@moduledoc`
+- Provider telemetry: `Provider.chat/3` emits `[:agora, :provider, :call, :start | :stop | :exception]` via span
+- Tool telemetry: outer `start`/`stop` in `ToolBroker.execute/4` (guaranteed terminal event), inner `:exception` in `execute_single/4` catch
+- Middleware telemetry: `Chain.run/2` emits `[:agora, :middleware, :call, :start | :stop]` via span; empty list fast path skips telemetry
+- Agent exception: `[:agora, :agent, :run, :exception]` emitted in `safe_reasoning_loop` catch with sanitized metadata
+- `Agora.EventBus` — Registry-backed pub/sub: `subscribe/2`, `broadcast/2`, `unsubscribe/1`; idempotent subscribe; NOT wired to telemetry
+- Existing Agent/Orchestrator telemetry unchanged (manual `:telemetry.execute`); new instrumentation uses `:telemetry.span/3`

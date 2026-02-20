@@ -8,6 +8,7 @@ defmodule Agora.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Registry, keys: :duplicate, name: Agora.EventBus.Registry},
       {Task.Supervisor, name: Agora.ToolSupervisor},
       Agora.Agent.Supervisor,
       Agora.Orchestrator.RunnerSupervisor

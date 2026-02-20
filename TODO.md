@@ -372,31 +372,53 @@ Persistent and in-process memory backends for agent conversation history and kno
 
 ---
 
-## Phase 7: Observability
+## Phase 7: Observability ✅
 
 Telemetry-based instrumentation and an internal event bus for UI integration and debugging.
 
 ### Telemetry Events
 
-- [ ] `[:agora, :agent, :run, :start | :stop | :exception]`
-- [ ] `[:agora, :agent, :loop_iteration, :start | :stop]`
-- [ ] `[:agora, :provider, :call, :start | :stop | :exception]`
-- [ ] `[:agora, :tool, :call, :start | :stop | :exception]`
-- [ ] `[:agora, :middleware, :call, :start | :stop]`
-- [ ] `[:agora, :orchestrator, :step, :start | :stop]`
+- [x] `[:agora, :agent, :run, :start | :stop | :exception]`
+- [x] `[:agora, :agent, :loop_iteration, :start | :stop]`
+- [x] `[:agora, :provider, :call, :start | :stop | :exception]`
+- [x] `[:agora, :tool, :call, :start | :stop | :exception]`
+- [x] `[:agora, :middleware, :call, :start | :stop]`
+- [x] `[:agora, :orchestrator, :run | :step, :start | :stop]`
 
 ### Instrumentation
 
-- [ ] `Agora.Telemetry` — helper module with `span/3` wrappers for consistent event emission
-- [ ] Attach telemetry calls at each instrumentation point in Agent, ToolBroker, Provider, Middleware, Orchestrator
+- [x] `Agora.Telemetry` — helper module with `span/3` and `emit/3` wrappers, canonical event documentation
+- [x] Provider telemetry: `Provider.chat/3` wrapped with span (start/stop/exception)
+- [x] Tool telemetry: outer start/stop in `ToolBroker.execute/4` (guaranteed terminal event even on :brutal_kill), inner exception in `execute_single/4` catch
+- [x] Middleware telemetry: `Chain.run/2` wrapped with span; empty middleware fast path skips telemetry
+- [x] Agent exception event: `[:agora, :agent, :run, :exception]` in `safe_reasoning_loop` catch with sanitized metadata
 
 ### EventBus
 
-- [ ] `Agora.EventBus` — lightweight pub/sub (Registry-backed) for internal component messaging
-  - [ ] `subscribe/2`, `broadcast/2`
-  - [ ] Used for: UI integration, audit trail, debugging multi-agent systems
-- [ ] Tests for telemetry event emission
-- [ ] Tests for EventBus pub/sub delivery
+- [x] `Agora.EventBus` — Registry-backed pub/sub with `:duplicate` keys for internal component messaging
+  - [x] `subscribe/2` (idempotent), `broadcast/2`, `unsubscribe/1`
+  - [x] Messages delivered as `{Agora.EventBus, topic, message}` tuples
+  - [x] Process exit auto-unregisters; NOT wired to telemetry (user bridges if desired)
+- [x] `Agora.EventBus.Registry` added to application supervision tree
+
+### Design Decisions
+
+- D1: Existing Agent/Orchestrator telemetry left as manual `:telemetry.execute` (intentional — refactoring would break tested measurement key assertions for no behavioral gain)
+- D2: New instrumentation uses `:telemetry.span/3` which adds `monotonic_time` to measurements
+- D3: Provider resolution errors do NOT emit provider telemetry — they're config issues, not provider calls
+- D4: Tool telemetry uses two levels: outer `start`/`stop` pairs around each call (paired under normal supervisor operation), inner `:exception` for crash visibility
+- D5: EventBus `subscribe/2` checks `Registry.keys/2` before register to prevent duplicate deliveries (no TOCTOU — same process)
+- D6: Sanitized metadata: exception `reason` stringified, `stacktrace` truncated to 1000 chars, no raw terms or API keys
+
+### Testing
+
+- [x] Telemetry helper tests (span start/stop/exception, emit delegation)
+- [x] Provider telemetry tests (success, error, exception, resolution failure, metadata sanitization)
+- [x] Tool broker telemetry tests (success, error, raise, timeout, exit, multiple tools)
+- [x] Middleware chain telemetry tests (non-empty, halt, empty, crash, metadata)
+- [x] Agent exception telemetry tests (sanitized metadata, backward-compat run:stop still fires)
+- [x] EventBus tests (subscribe/broadcast, multiple subscribers, unsubscribe, topic isolation, idempotent subscribe, process exit cleanup)
+- [x] 576 total tests (53 new), 0 failures
 
 ---
 

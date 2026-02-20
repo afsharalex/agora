@@ -13,6 +13,7 @@
   <a href="#middleware">Middleware</a> |
   <a href="#memory">Memory</a> |
   <a href="#orchestration">Orchestration</a> |
+  <a href="#observability">Observability</a> |
   <a href="#architecture">Architecture</a> |
   <a href="docs/Design-v0.md">Design Doc</a> |
   <a href="TODO.md">Roadmap</a>
@@ -31,6 +32,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
 - **Memory backends** -- Bound conversation growth with ring buffers or persist history to disk across restarts
 - **Orchestration patterns** -- Single, round-robin, supervisor delegation, and chat-room multi-agent coordination
+- **Observability** -- Telemetry events for providers, tools, middleware, and agents; Registry-backed EventBus for pub/sub
 
 ## Installation
 
@@ -353,6 +355,39 @@ condition = TerminationCondition.any_of([
 ])
 ```
 
+## Observability
+
+Agora emits telemetry events at key instrumentation points via the `:telemetry` library. Attach handlers to observe agent behavior without modifying agent code.
+
+### Telemetry events
+
+| Event prefix | Suffix events | Emitted by |
+|---|---|---|
+| `[:agora, :agent, :run]` | `:start`, `:stop`, `:exception` | `Agora.Agent` |
+| `[:agora, :agent, :loop_iteration]` | `:start`, `:stop` | `Agora.Agent` |
+| `[:agora, :provider, :call]` | `:start`, `:stop`, `:exception` | `Agora.Provider` |
+| `[:agora, :tool, :call]` | `:start`, `:stop`, `:exception` | `Agora.ToolBroker` |
+| `[:agora, :middleware, :call]` | `:start`, `:stop` | `Agora.Middleware.Chain` |
+| `[:agora, :orchestrator, :run]` | `:start`, `:stop` | `Agora.Orchestrator.Runner` |
+| `[:agora, :orchestrator, :step]` | `:start`, `:stop` | `Agora.Orchestrator.Runner` |
+
+See `Agora.Telemetry` moduledoc for full measurement and metadata details per event.
+
+### EventBus
+
+A lightweight Registry-backed pub/sub for internal component messaging, UI integration, and debugging:
+
+```elixir
+Agora.EventBus.subscribe(:agent_events)
+Agora.EventBus.broadcast(:agent_events, %{status: :completed})
+
+receive do
+  {Agora.EventBus, :agent_events, message} -> IO.inspect(message)
+end
+```
+
+The EventBus is intentionally decoupled from telemetry -- users can bridge the two if desired.
+
 ## Architecture
 
 ```
@@ -387,6 +422,8 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Orchestrator` | Behaviour for multi-agent orchestration strategies |
 | `Agora.Orchestrator.Runner` | GenServer driving orchestration loops with crash protection |
 | `Agora.Orchestrator.TerminationCondition` | Composable conditions (closures) for stopping orchestration |
+| `Agora.Telemetry` | Telemetry helpers (`span/3`, `emit/3`) and canonical event documentation |
+| `Agora.EventBus` | Registry-backed pub/sub for internal component messaging |
 | `Agora.Config` | Application-level config helpers with provider-namespaced keys |
 
 ### Config resolution order
@@ -424,7 +461,7 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 4 | Middleware System | Complete |
 | 5 | Orchestration | Complete |
 | 6 | Memory System | Complete |
-| 7 | Observability | Planned |
+| 7 | Observability | Complete |
 | 8 | Workflow Engine | Planned |
 | 9 | Streaming Support | Planned |
 | 10 | Top-Level API & Release | Planned |

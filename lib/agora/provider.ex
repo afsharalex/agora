@@ -69,7 +69,19 @@ defmodule Agora.Provider do
           {:ok, Message.t()} | {:error, Error.t()}
   def chat(provider, messages, %AgentConfig{} = config) do
     with {:ok, mod} <- resolve(provider) do
-      mod.chat(messages, config)
+      meta = %{provider: provider, model: config.model, message_count: length(messages)}
+
+      Agora.Telemetry.span([:agora, :provider, :call], meta, fn ->
+        result = mod.chat(messages, config)
+
+        stop_meta =
+          case result do
+            {:ok, _} -> meta
+            {:error, error} -> Map.put(meta, :error, error)
+          end
+
+        {result, stop_meta}
+      end)
     end
   end
 

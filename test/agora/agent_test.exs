@@ -581,5 +581,62 @@ defmodule Agora.AgentTest do
 
       :telemetry.detach("test-#{inspect(ref)}")
     end
+
+    test "agent crash emits run:exception with sanitized metadata" do
+      ref = make_ref()
+      test_pid = self()
+      handler_id = "test-#{inspect(ref)}"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:agora, :agent, :run, :exception],
+          [:agora, :agent, :run, :stop]
+        ],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {ref, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      counter = :counters.new(1, [:atomics])
+
+      config =
+        echo_config(
+          name: "crash-telemetry-test",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              :counters.add(counter, 1, 1)
+              raise "agent loop boom"
+            end
+          ]
+        )
+
+      {:ok, pid} = Agent.start_link(config: config)
+      {:error, _} = Agent.run(pid, "Hello")
+
+      assert_receive {^ref, [:agora, :agent, :run, :exception], %{duration: duration}, exc_meta}
+      assert is_integer(duration) and duration >= 0
+
+      # Sanitized metadata checks
+      assert exc_meta.provider == :echo
+      assert exc_meta.model == "echo"
+      assert exc_meta.agent_name == "crash-telemetry-test"
+      assert exc_meta.kind == :error
+      assert is_binary(exc_meta.reason)
+      assert exc_meta.reason =~ "agent loop boom"
+      assert is_binary(exc_meta.stacktrace)
+      assert String.length(exc_meta.stacktrace) <= 1000
+
+      # No raw exception terms
+      refute is_struct(exc_meta.reason)
+      refute Map.has_key?(exc_meta, :config)
+
+      # run:stop still fires after exception (backward compat)
+      assert_receive {^ref, [:agora, :agent, :run, :stop], %{duration: _}, _}
+    end
   end
 end
