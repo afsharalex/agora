@@ -410,6 +410,7 @@ Interpretation rules:
 | `:a ~> :b ~> :c` | `edge(:a, :b)` + `edge(:b, :c)` | Chain |
 | `[:a, :b] ~> :c` | `edge(:a, :c)` + `edge(:b, :c)` | Fan-in |
 | `:a ~> [:b, :c]` | `edge(:a, :b)` + `edge(:a, :c)` | Fan-out |
+| `[:a, :b] ~> [:c, :d]` | **Validation error** | Mixed lists (use explicit `edge/3` or separate `~>` expressions) |
 
 Conditional edges use explicit `edge/3` — attaching conditions to `~>` would defeat its visual clarity purpose.
 
@@ -432,6 +433,8 @@ end
 ### Phase 3: Module DSL
 
 `use Agora.Workflow.Definition` with `@before_compile` validation. Only justified if workflows become reusable, versioned, production artifacts (similar to Broadway pipelines or Oban workers). Currently workflows are ephemeral data — the `%Workflow{}` struct is the right abstraction.
+
+Compile-time cycle detection: unconditional cycles are compile errors (they can never execute). Cycles involving at least one conditional edge are compile warnings (the condition may break the cycle at runtime).
 
 ### Explicitly rejected
 

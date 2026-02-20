@@ -227,6 +227,8 @@ end
 
 Sugar macros that delegate to Builder equivalents.
 
+**Naming note:** Phase 1 `Builder.chain/2` takes `[{id, handler}]` tuples (defines steps + wires edges). The Phase 2 macro `chain` takes a list of already-defined step IDs and wires edges only — it expands to `Builder.sequence/2`. The naming is intentionally distinct in the Builder API (`chain/2` = define+wire, `sequence/2` = wire-only) so the macro simply maps to the correct underlying function.
+
 ```elixir
 workflow do
   step :a, run: &a/1
@@ -234,15 +236,16 @@ workflow do
   step :c, run: &c/1
   step :d, run: &d/1
 
-  chain [:a, :b, :c]
+  chain [:a, :b, :c]            # expands to Builder.sequence/2 (wire-only)
   parallel [:b, :c], from: :a, to: :d
 end
 ```
 
-- [ ] **13.1** Implement `chain` macro — expands to `Builder.sequence/2`
+- [ ] **13.1** Implement `chain` macro — expands to `Builder.sequence/2` (edge-only wiring, steps already defined above)
 - [ ] **13.2** Implement `parallel` macro — expands to `Builder.parallel/3`
-- [ ] **13.3** Tests: `chain` generates linear edges
+- [ ] **13.3** Tests: `chain` generates linear edges between pre-defined steps
 - [ ] **13.4** Tests: `parallel` generates fan-out/fan-in edges
+- [ ] **13.5** Documentation: note that macro `chain` maps to `Builder.sequence/2` (wire-only) not `Builder.chain/2` (define+wire)
 - [ ] **13.5** Tests: `chain` + `parallel` combined in one workflow
 
 ### 14. `~>` edge operator
@@ -276,7 +279,7 @@ Interpretation rules:
 - [ ] **14.3** Handle chained edges: `:a ~> :b ~> :c` → nested `{:~>, _, [{:~>, _, [:a, :b]}, :c]}` AST, flatten recursively
 - [ ] **14.4** Handle fan-in: `[:a, :b] ~> :c` → `Builder.edge` for each source
 - [ ] **14.5** Handle fan-out: `:a ~> [:b, :c]` → `Builder.edge` for each target
-- [ ] **14.6** Handle mixed: `[:a, :b] ~> [:c, :d]` → cross-product of edges (or validation error — decide)
+- [ ] **14.6** Handle mixed: `[:a, :b] ~> [:c, :d]` → validation error (cross-product is surprising; use explicit `edge/3` calls or separate `~>` expressions instead)
 - [ ] **14.7** Validate operands are atoms or lists of atoms → clear error for invalid types
 - [ ] **14.8** `~>` edges go through `add_edge/2` duplicate detection (same as all other edges)
 - [ ] **14.9** Tests: single edge `:a ~> :b`
@@ -285,7 +288,8 @@ Interpretation rules:
 - [ ] **14.12** Tests: fan-out `:a ~> [:b, :c]`
 - [ ] **14.13** Tests: `~>` combined with `after:` on steps — both produce edges, no conflicts
 - [ ] **14.14** Tests: `~>` duplicate edge detection
-- [ ] **14.15** Tests: invalid operand types → error
+- [ ] **14.15** Tests: mixed lists `[:a, :b] ~> [:c, :d]` → validation error
+- [ ] **14.16** Tests: invalid operand types → error
 
 ### 15. Error reporting and compile-time diagnostics
 
@@ -429,12 +433,14 @@ Best-effort compile-time checks surfaced as clear compilation errors.
 
 - [ ] **21.1** Duplicate step IDs → compile error (detected via module attribute accumulation)
 - [ ] **21.2** Self-loop edges → compile error
-- [ ] **21.3** Cycle detection on statically-known edges → compile warning (not error, since conditional edges may break cycles at runtime)
-- [ ] **21.4** `condition:`/`when:` constraints (same as Phase 1) → compile error
-- [ ] **21.5** Tests: duplicate step ID → compile error with clear message
-- [ ] **21.6** Tests: self-loop → compile error
-- [ ] **21.7** Tests: cycle in static edges → compile warning
-- [ ] **21.8** Tests: valid workflow compiles without warnings
+- [ ] **21.3** Cycle detection on unconditional edges → compile error (unconditional cycles can never execute)
+- [ ] **21.4** Cycle detection on graphs containing conditional edges → compile warning (conditional edges may break the cycle at runtime)
+- [ ] **21.5** `condition:`/`when:` constraints (same as Phase 1) → compile error
+- [ ] **21.6** Tests: duplicate step ID → compile error with clear message
+- [ ] **21.7** Tests: self-loop → compile error
+- [ ] **21.8** Tests: unconditional cycle → compile error
+- [ ] **21.9** Tests: cycle involving conditional edge → compile warning (not error)
+- [ ] **21.10** Tests: valid workflow compiles without warnings
 
 ### 22. `Agora.run_workflow/2` module support
 
