@@ -11,7 +11,7 @@ defmodule Agora.AgentConfig do
 
     * `:instructions` - system prompt for the agent (default: `""`)
     * `:tools` - list of tool definitions (default: `[]`)
-    * `:memory` - memory configuration keyword list (default: `nil`)
+    * `:memory` - memory backend as `{module, opts}` tuple (e.g. `{Agora.Memory.Buffer, max_messages: 100}`) (default: `nil`)
     * `:middleware` - list of middleware modules or 2-arity functions (see `Agora.Middleware`) (default: `[]`)
     * `:max_iterations` - maximum reasoning loop iterations (default: `10`)
     * `:name` - human-readable agent name (default: `nil`)
@@ -24,7 +24,7 @@ defmodule Agora.AgentConfig do
           model: String.t(),
           instructions: String.t(),
           tools: list(),
-          memory: keyword() | nil,
+          memory: {module(), keyword()} | nil,
           middleware: list(),
           max_iterations: pos_integer(),
           name: String.t() | nil,
@@ -66,9 +66,10 @@ defmodule Agora.AgentConfig do
       doc: "List of tool definitions"
     ],
     memory: [
-      type: {:or, [:keyword_list, nil]},
+      type: {:or, [{:tuple, [:atom, :keyword_list]}, nil]},
       default: nil,
-      doc: "Memory configuration"
+      doc:
+        "Memory backend as {module, opts} tuple (e.g. {Agora.Memory.Buffer, max_messages: 100})"
     ],
     middleware: [
       type: {:list, :any},

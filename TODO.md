@@ -248,7 +248,7 @@ Cross-cutting concerns via composable interceptors — the primary extension mec
 
 ---
 
-## Phase 5: Orchestration
+## Phase 5: Orchestration ✅
 
 Multi-agent coordination patterns — orchestrators control *which* agent runs, not *how* agents work.
 
@@ -307,33 +307,68 @@ Multi-agent coordination patterns — orchestrators control *which* agent runs, 
 - [x] Runner tests with Echo-backed agents (lifecycle, run, crash protection, telemetry)
 - [x] Integration tests (tools within orchestration, convenience functions)
 - [x] `Agora.Error` — added `:orchestration_error` type
-- [x] 462 total tests (121 new), 0 failures
+- [x] 462 total tests (121 new, pre-Phase-6), 0 failures
 
 ---
 
-## Phase 6: Memory System
+## Phase 6: Memory System ✅
 
 Persistent and in-process memory backends for agent conversation history and knowledge.
 
 ### Memory Behaviour
 
-- [ ] `Agora.Memory` behaviour
-  - [ ] `@callback init(config) :: {:ok, state}`
-  - [ ] `@callback get(state) :: {:ok, [Message.t()]}`
-  - [ ] `@callback put(state, Message.t()) :: {:ok, state}`
-  - [ ] `@callback clear(state) :: {:ok, state}`
+- [x] `Agora.Memory` behaviour
+  - [x] `@callback init(config :: keyword()) :: {:ok, state} | {:error, Error.t()}`
+  - [x] `@callback get(state) :: {:ok, [Message.t()]} | {:error, Error.t()}`
+  - [x] `@callback save(state, [Message.t()]) :: {:ok, state} | {:error, Error.t()}`
+  - [x] `@callback clear(state) :: {:ok, state} | {:error, Error.t()}`
+  - [x] Dispatch functions accept `{module, state}` tuples — route to backend
+  - [x] Module validation via `Code.ensure_loaded/1` + `function_exported?/3` at init
 
 ### Backends
 
-- [ ] `Agora.Memory.Buffer` — in-memory ring buffer with configurable max messages
-- [ ] `Agora.Memory.File` — JSON-file-backed persistent memory
+- [x] `Agora.Memory.Buffer` — in-memory ring buffer with `:queue`, bounded by `:max_messages`
+  - [x] `save/2` replaces entire queue with last N messages from input list
+  - [x] O(1) amortized enqueue/dequeue; manual size counter avoids O(n) `:queue.len/1`
+- [x] `Agora.Memory.File` — JSON-file-backed persistent memory
+  - [x] Atomic writes via temp-file + rename (crash-safe)
+  - [x] Safe deserialization with explicit atom lookup maps (never `String.to_existing_atom/1`)
+  - [x] No cached messages — state is `%{path}` only (reads always hit disk)
 
 ### Integration
 
-- [ ] Wire memory into Agent loop — load history on start, append after each turn
-- [ ] Memory configuration via `AgentConfig.memory`
-- [ ] Tests for each backend
-- [ ] Test agent with memory across multiple `run/2` calls
+- [x] Memory is canonical store — `state.messages` re-derived from `Memory.get()` after each run
+- [x] Memory config format: `{module, keyword()}` tuple or `nil`
+- [x] Memory save at run boundaries (after reasoning loop, before telemetry)
+- [x] Fatal error handling — save failure overrides successful run result
+- [x] `Agent.clear_memory/1` API for clearing memory backend
+- [x] `child_spec/1` returns `:transient` when memory configured (enables supervised restart)
+- [x] `Agora.Error` — added `:memory_error` type
+
+### Design Decisions
+
+- D1: Config format `{module, keyword()}` — clean dispatch, module + options in one value
+- D2: Memory is canonical store; `state.messages` re-derived from `Memory.get()` after save
+- D3: Atomic `save/2` takes full message list — eliminates partial persistence and diff bugs
+- D4: Save at run boundaries — avoids mid-loop complexity; single atomic operation
+- D5: System messages excluded from memory — reconstructed from config on init
+- D6: Fatal errors — save failure overrides successful run result for data consistency
+- D7: Buffer uses `:queue` + size counter for O(1) amortized operations
+- D8: File uses temp-file + rename for atomic writes (crash-safe)
+- D9: File state is `%{path}` only — no cached messages avoids triple duplication
+- D10: Crash recovery unchanged — process dict tracks messages; memory has previous run's state
+- D11: Module validation at init catches undef errors early
+- D12: `:transient` restart when memory configured enables supervised recovery
+- D13: Safe serialization with atom lookup maps; typed `:memory_error` on unknown values
+- D14: All callbacks return `{:ok, ...} | {:error, Error.t()}`
+
+### Testing
+
+- [x] Memory dispatch unit tests (module validation, tuple threading, error propagation)
+- [x] Buffer backend tests (init validation, save/get/clear, ring buffer bounding, round-trip)
+- [x] File backend tests (init validation, atomic writes, serialization round-trip including tool_calls/results/DateTime, edge cases)
+- [x] Integration tests (Agent + Buffer, Agent + File, clear_memory, restart persistence, middleware composition, invalid config, restart semantics)
+- [x] 523 total tests (61 new), 0 failures
 
 ---
 
@@ -481,7 +516,9 @@ Polish the public API surface, write documentation, build examples, and prepare 
 | Agent concurrency | Queuing (GenServer default) | Concurrent `run/2` calls queue behind each other; simpler than async rejection; iteration limit bounds each run |
 | Telemetry metadata | Sanitized (no config) | Only provider/model/agent_name/max_iterations emitted; `provider_opts` excluded to prevent API key leakage |
 | Crash history | Process dictionary tracking | `reasoning_loop` stores latest messages in process dictionary each iteration; catch block recovers partial history instead of losing it |
-| Memory | Behaviour + backends | Swappable storage; Buffer for dev, File for persistence, extensible to ETS/DB |
+| Memory | Behaviour + backends; canonical store | Swappable storage; Buffer for dev, File for persistence, extensible to ETS/DB. Memory is canonical — state.messages re-derived after each save |
+| Memory save | Atomic `save/2` at run boundaries | Full list replacement eliminates partial persistence and diff bugs; single save per run |
+| Memory errors | Fatal (override successful run) | Silent data loss worse than visible error; consistent with project error convention |
 | Middleware entries | Modules or 2-arity closures | Chain dispatches on `is_atom` vs `is_function/2`; closures enable parameterized middleware via factory functions |
 | Parameterized MW | Factory returns closure (`MaxTokens.new(opts)`) | Keeps behaviour at 2-arity; closures capture options naturally without complicating the interface |
 | Middleware chain | Plug-style `next` composition | Familiar to Elixir developers, composable, natural halt semantics; alternatives (pipeline, event) rejected |
@@ -558,8 +595,8 @@ lib/agora/
 │   ├── supervisor.ex                  # Phase 5 (delegation strategy)
 │   └── chat_room.ex                   # Phase 5
 │
+├── memory.ex                             # Phase 6 (behaviour + dispatch)
 ├── memory/
-│   ├── memory.ex                      # Phase 6 (behaviour)
 │   ├── buffer.ex                      # Phase 6
 │   └── file.ex                        # Phase 6
 │

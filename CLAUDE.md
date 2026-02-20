@@ -33,7 +33,7 @@ All LLM interaction flows through the `Agora.Provider` behaviour. Providers tran
 - **`Agora.Provider`** — Behaviour defining `chat/2` callback + resolution (`resolve/1` maps atoms like `:anthropic` to modules). `get_provider_opt/3` implements two-tier config lookup: `provider_opts` first, then application config.
 - **`Agora.Message`** — Universal message struct with role (`:system | :user | :assistant | :tool`), content, tool_calls, tool_results, metadata. Content is nilable for assistant messages that only contain tool calls.
 - **`Agora.AgentConfig`** — NimbleOptions-validated configuration. `provider_opts` keyword list carries per-agent overrides (API keys, base URLs, `req_options` for test injection).
-- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Nine types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:unknown`.
+- **`Agora.Error`** — Typed errors returned as `{:error, %Error{}}` tuples (never raised). Types: `:provider_error`, `:tool_error`, `:validation_error`, `:timeout`, `:rate_limit`, `:auth_error`, `:config_error`, `:iteration_limit`, `:middleware_error`, `:memory_error`, `:orchestration_error`, `:unknown`.
 - **`Agora.Config`** — Wraps `Application.get_env/3`. Convention: `api_key(:anthropic)` reads `:anthropic_api_key`.
 
 ### Provider Implementations
@@ -65,4 +65,14 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–5 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration) are complete. Next up: Phase 6 (Memory System) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–6 (Foundation, Provider Abstraction, Tool System, Agent Runtime, Middleware System, Orchestration, Memory System) are complete. Next up: Phase 7 (Observability) — see `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+
+### Memory System (Phase 6)
+
+- `Agora.Memory` behaviour: `init/1`, `get/1`, `save/2`, `clear/1` — dispatch via `{module, state}` tuples
+- Two backends: `Buffer` (in-memory ring buffer with `:queue`) and `File` (JSON with atomic writes)
+- Memory is the canonical message store — `state.messages` re-derived from `Memory.get()` after each run
+- Config format: `{module, keyword()}` tuple (e.g. `{Agora.Memory.Buffer, max_messages: 100}`)
+- Save at run boundaries (after reasoning loop, before telemetry) — fatal on failure
+- `Agent.clear_memory/1` API; `:transient` restart when memory configured
+- Module validation via `Code.ensure_loaded/1` + `function_exported?/3` at init

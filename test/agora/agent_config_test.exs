@@ -31,7 +31,7 @@ defmodule Agora.AgentConfigTest do
           [
             instructions: "Be helpful",
             tools: [:search],
-            memory: [backend: :ets],
+            memory: {Agora.Memory.Buffer, max_messages: 100},
             middleware: [:logging],
             max_iterations: 5,
             name: "researcher",
@@ -42,7 +42,7 @@ defmodule Agora.AgentConfigTest do
 
       assert config.instructions == "Be helpful"
       assert config.tools == [:search]
-      assert config.memory == [backend: :ets]
+      assert config.memory == {Agora.Memory.Buffer, max_messages: 100}
       assert config.middleware == [:logging]
       assert config.max_iterations == 5
       assert config.name == "researcher"

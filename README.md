@@ -11,6 +11,7 @@
   <a href="#quick-start">Quick Start</a> |
   <a href="#providers">Providers</a> |
   <a href="#middleware">Middleware</a> |
+  <a href="#memory">Memory</a> |
   <a href="#orchestration">Orchestration</a> |
   <a href="#architecture">Architecture</a> |
   <a href="docs/Design-v0.md">Design Doc</a> |
@@ -28,6 +29,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **Structured errors** -- Typed `{:ok, result} | {:error, %Error{}}` tuples throughout (no exceptions for control flow)
 - **BEAM-native** -- Agents as supervised processes, tool execution via `Task.Supervisor`, per-run supervision trees
 - **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
+- **Memory backends** -- Bound conversation growth with ring buffers or persist history to disk across restarts
 - **Orchestration patterns** -- Single, round-robin, supervisor delegation, and chat-room multi-agent coordination
 
 ## Installation
@@ -249,6 +251,56 @@ my_mw = fn ctx, next ->
 end
 ```
 
+## Memory
+
+Memory backends let agents bound conversation growth and persist history across restarts. Memory is configured via a `{module, opts}` tuple on the agent config.
+
+### In-memory ring buffer
+
+```elixir
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  instructions: "You are a helpful assistant.",
+  memory: {Agora.Memory.Buffer, max_messages: 100}
+)
+
+{:ok, pid} = Agent.start_link(config: config)
+# After each run, only the last 100 non-system messages are kept
+```
+
+### File persistence
+
+```elixir
+config = AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  instructions: "You are a helpful assistant.",
+  memory: {Agora.Memory.File, path: "/tmp/agent_history.json"}
+)
+
+{:ok, pid} = Agent.start_link(config: config)
+{:ok, _} = Agent.run(pid, "Remember this conversation")
+GenServer.stop(pid)
+
+# Restart -- history is loaded from disk
+{:ok, pid2} = Agent.start_link(config: config)
+# pid2 sees the full conversation from the previous session
+```
+
+### Clear memory
+
+```elixir
+Agent.clear_memory(pid)  # removes all persisted messages
+```
+
+### Built-in backends
+
+| Backend | Description |
+|---------|-------------|
+| `Agora.Memory.Buffer` | In-memory ring buffer, keeps last `:max_messages` |
+| `Agora.Memory.File` | JSON file persistence with atomic writes |
+
 ## Orchestration
 
 Orchestrators coordinate multiple agents without modifying how agents work internally.
@@ -328,6 +380,7 @@ User → Agent.run/2 → reasoning loop:
 | `Agora.Error` | Typed errors: `:provider_error`, `:auth_error`, `:rate_limit`, `:timeout`, etc. |
 | `Agora.Tool` | Behaviour for defining tools + `FunctionTool` for inline definitions |
 | `Agora.ToolBroker` | Supervised parallel tool execution with timeout enforcement |
+| `Agora.Memory` | Behaviour for memory backends (Buffer, File) with dispatch via `{module, state}` |
 | `Agora.Middleware` | Behaviour for composable interceptors at 4 hook points |
 | `Agora.Middleware.Chain` | Plug-style chain executor with error safety |
 | `Agora.Tool.Schema` | JSON Schema helpers for tool parameter validation |
@@ -370,7 +423,7 @@ Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full de
 | 3 | Agent Runtime | Complete |
 | 4 | Middleware System | Complete |
 | 5 | Orchestration | Complete |
-| 6 | Memory System | Next |
+| 6 | Memory System | Complete |
 | 7 | Observability | Planned |
 | 8 | Workflow Engine | Planned |
 | 9 | Streaming Support | Planned |

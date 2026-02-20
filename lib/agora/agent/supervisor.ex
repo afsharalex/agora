@@ -2,9 +2,10 @@ defmodule Agora.Agent.Supervisor do
   @moduledoc """
   DynamicSupervisor for agent processes.
 
-  Agents are started as `:temporary` children — they are not restarted on crash
-  since conversation state would be lost. Phase 6 (Memory) will make agents
-  restartable by persisting state externally.
+  Agents without memory are started as `:temporary` children (not restarted on crash).
+  Agents with a memory backend configured are started as `:transient` — they can be
+  restarted by the supervisor and will reload conversation history from the memory
+  backend on init.
   """
 
   use DynamicSupervisor

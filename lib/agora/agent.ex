@@ -44,7 +44,7 @@ defmodule Agora.Agent do
 
   use GenServer
 
-  alias Agora.{AgentConfig, Error, Message, Provider, ToolBroker}
+  alias Agora.{AgentConfig, Error, Memory, Message, Provider, ToolBroker}
   alias Agora.Middleware.{Chain, Context}
 
   @type status :: :idle | :running
@@ -102,12 +102,26 @@ defmodule Agora.Agent do
     GenServer.call(agent, :get_status)
   end
 
+  @doc """
+  Clears the agent's memory backend, removing all persisted messages.
+
+  Returns `:ok` on success. Returns `{:error, %Error{}}` if no memory
+  backend is configured or if the clear operation fails.
+  """
+  @spec clear_memory(GenServer.server()) :: :ok | {:error, Error.t()}
+  def clear_memory(agent) do
+    GenServer.call(agent, :clear_memory)
+  end
+
   @doc false
   def child_spec(opts) do
+    config = Keyword.fetch!(opts, :config)
+    restart = if config.memory, do: :transient, else: :temporary
+
     %{
       id: __MODULE__,
       start: {__MODULE__, :start_link, [opts]},
-      restart: :temporary
+      restart: restart
     }
   end
 
@@ -115,15 +129,42 @@ defmodule Agora.Agent do
 
   @impl true
   def init(%AgentConfig{} = config) do
-    messages =
+    system_messages =
       if config.instructions != "" do
         [Message.system(config.instructions)]
       else
         []
       end
 
-    {:ok,
-     %{config: config, messages: messages, status: :idle, iteration: 0, middleware_metadata: %{}}}
+    case init_memory(config.memory) do
+      {:ok, memory_state, persisted_messages} ->
+        messages = system_messages ++ persisted_messages
+
+        {:ok,
+         %{
+           config: config,
+           messages: messages,
+           status: :idle,
+           iteration: 0,
+           middleware_metadata: %{},
+           memory_state: memory_state
+         }}
+
+      {:error, error} ->
+        {:stop, error}
+    end
+  end
+
+  defp init_memory(nil), do: {:ok, nil, []}
+
+  defp init_memory({_module, _opts} = memory_config) do
+    with {:ok, memory_state} <- Memory.init(memory_config),
+         {:ok, persisted_messages} <- Memory.get(memory_state) do
+      # Filter out any persisted system messages — system prompt is reconstructed
+      # from config.instructions and should never come from storage.
+      non_system = Enum.reject(persisted_messages, &(&1.role == :system))
+      {:ok, memory_state, non_system}
+    end
   end
 
   @impl true
@@ -141,6 +182,9 @@ defmodule Agora.Agent do
     start_time = System.monotonic_time()
 
     {result, final_state} = safe_reasoning_loop(messages, state)
+
+    # Memory save + reload — after loop, before telemetry/reply
+    {result, final_state} = memory_save_and_reload(result, final_state)
 
     duration = System.monotonic_time() - start_time
     final_state = %{final_state | status: :idle}
@@ -166,6 +210,59 @@ defmodule Agora.Agent do
 
   def handle_call(:get_status, _from, state) do
     {:reply, state.status, state}
+  end
+
+  def handle_call(:clear_memory, _from, %{memory_state: nil} = state) do
+    {:reply, {:error, Error.new(:memory_error, "No memory backend configured")}, state}
+  end
+
+  def handle_call(:clear_memory, _from, state) do
+    case Memory.clear(state.memory_state) do
+      {:ok, new_memory_state} ->
+        system_msgs = Enum.filter(state.messages, &(&1.role == :system))
+        state = %{state | memory_state: new_memory_state, messages: system_msgs}
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  # --- Private: Memory save + reload ---
+
+  defp memory_save_and_reload(result, %{memory_state: nil} = state), do: {result, state}
+
+  defp memory_save_and_reload(result, state) do
+    non_system = Enum.reject(state.messages, &(&1.role == :system))
+
+    case Memory.save(state.memory_state, non_system) do
+      {:ok, new_memory_state} ->
+        case Memory.get(new_memory_state) do
+          {:ok, bounded_messages} ->
+            system_msgs = Enum.filter(state.messages, &(&1.role == :system))
+
+            state = %{
+              state
+              | memory_state: new_memory_state,
+                messages: system_msgs ++ bounded_messages
+            }
+
+            {result, state}
+
+          {:error, get_error} ->
+            {override_result(result, get_error), %{state | memory_state: new_memory_state}}
+        end
+
+      {:error, save_error} ->
+        {override_result(result, save_error), state}
+    end
+  end
+
+  defp override_result({:ok, _response}, memory_error), do: {:error, memory_error}
+
+  defp override_result({:error, %Error{} = original}, %Error{} = memory_error) do
+    {:error,
+     %{original | metadata: Map.put(original.metadata, :memory_error, to_string(memory_error))}}
   end
 
   # --- Private: Safe wrapper ---
