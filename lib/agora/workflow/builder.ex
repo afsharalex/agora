@@ -77,7 +77,7 @@ defmodule Agora.Workflow.Builder do
   def edge(%__MODULE__{} = builder, from, to, opts \\ []) do
     case Edge.new(Keyword.merge(opts, from: from, to: to)) do
       {:ok, edge} ->
-        %{builder | edges: builder.edges ++ [edge]}
+        add_edge(builder, edge)
 
       {:error, error} ->
         %{builder | errors: [error | builder.errors]}
@@ -95,7 +95,7 @@ defmodule Agora.Workflow.Builder do
 
     Enum.reduce(pairs, builder, fn [from, to], acc ->
       case Edge.new(from: from, to: to) do
-        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:ok, edge} -> add_edge(acc, edge)
         {:error, error} -> %{acc | errors: [error | acc.errors]}
       end
     end)
@@ -143,10 +143,28 @@ defmodule Agora.Workflow.Builder do
         end
 
       case Edge.new(from: from, to: to) do
-        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:ok, edge} -> add_edge(acc, edge)
         {:error, error} -> %{acc | errors: [error | acc.errors]}
       end
     end)
+  end
+
+  defp add_edge(%__MODULE__{} = builder, %Edge{} = edge) do
+    if edge_exists?(builder, edge.from, edge.to) do
+      error =
+        Error.new(
+          :workflow_error,
+          "Edge #{inspect(edge.from)} -> #{inspect(edge.to)} already exists"
+        )
+
+      %{builder | errors: [error | builder.errors]}
+    else
+      %{builder | edges: builder.edges ++ [edge]}
+    end
+  end
+
+  defp edge_exists?(%__MODULE__{} = builder, from, to) do
+    Enum.any?(builder.edges, fn e -> e.from == from and e.to == to end)
   end
 
   @doc """
@@ -208,9 +226,11 @@ defmodule Agora.Workflow.Builder do
       end)
       |> Enum.reject(fn pair -> MapSet.member?(explicit_pairs, pair) end)
 
+    # MapSet pre-filter above prevents explicit-vs-auto duplicates; add_edge/2
+    # here is a defensive guard (auto-vs-auto duplicates can't occur by construction).
     Enum.reduce(pairs, builder, fn {from, to}, acc ->
       case Edge.new(from: from, to: to) do
-        {:ok, edge} -> %{acc | edges: acc.edges ++ [edge]}
+        {:ok, edge} -> add_edge(acc, edge)
         {:error, error} -> %{acc | errors: [error | acc.errors]}
       end
     end)

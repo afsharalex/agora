@@ -297,6 +297,62 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "duplicate edge detection" do
+    test "duplicate edge via edge/4 produces error" do
+      assert {:error, error} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1)
+               |> Builder.edge(:a, :b)
+               |> Builder.edge(:a, :b)
+               |> Builder.build()
+
+      assert error.type == :workflow_error
+      assert error.message =~ "already exists"
+    end
+
+    test "duplicate edge via sequence/2 produces error" do
+      assert {:error, error} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1)
+               |> Builder.step(:c, &handler/1)
+               |> Builder.sequence([:a, :b, :c])
+               |> Builder.sequence([:a, :b])
+               |> Builder.build()
+
+      assert error.type == :workflow_error
+      assert error.message =~ "already exists"
+    end
+
+    test "duplicate edge via parallel/3 produces error" do
+      assert {:error, error} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1)
+               |> Builder.step(:c, &handler/1)
+               |> Builder.parallel([:b, :c], from: :a)
+               |> Builder.parallel([:b, :c], from: :a)
+               |> Builder.build()
+
+      assert error.type == :workflow_error
+      assert error.message =~ "already exists"
+    end
+
+    test "duplicate {from, to} with different conditions produces error" do
+      assert {:error, error} =
+               Builder.new()
+               |> Builder.step(:a, &handler/1)
+               |> Builder.step(:b, &handler/1)
+               |> Builder.edge(:a, :b, condition: fn _ -> true end)
+               |> Builder.edge(:a, :b)
+               |> Builder.build()
+
+      assert error.type == :workflow_error
+      assert error.message =~ "already exists"
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =
