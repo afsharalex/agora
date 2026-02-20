@@ -376,6 +376,59 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "step_defaults" do
+    test "new/1 stores step_defaults on struct" do
+      builder = Builder.new(step_defaults: [timeout: 30_000])
+      assert builder.step_defaults == [timeout: 30_000]
+    end
+
+    test "per-step opts override defaults" do
+      builder =
+        Builder.new(step_defaults: [timeout: 30_000])
+        |> Builder.step(:a, &handler/1, timeout: 5_000)
+
+      assert builder.steps[:a].timeout == 5_000
+    end
+
+    test "new/0 still works with empty defaults" do
+      builder = Builder.new()
+      assert builder.step_defaults == []
+    end
+
+    test "non-allowed keys produce error" do
+      builder = Builder.new(step_defaults: [name: "x"])
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "only accepts :timeout and :retry"
+    end
+
+    test "wiring keys produce error" do
+      builder = Builder.new(step_defaults: [after: :a])
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "only accepts :timeout and :retry"
+    end
+
+    test "non-keyword step_defaults produces error" do
+      builder = Builder.new(step_defaults: :bad)
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "keyword list"
+    end
+
+    test "non-keyword new/1 arg produces error" do
+      builder = Builder.new(:bad)
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "keyword list"
+    end
+
+    test "defaults applied when step has no overrides" do
+      builder =
+        Builder.new(step_defaults: [timeout: 10_000, retry: 3])
+        |> Builder.step(:a, &handler/1)
+
+      assert builder.steps[:a].timeout == 10_000
+      assert builder.steps[:a].retry == 3
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =

@@ -30,16 +30,47 @@ defmodule Agora.Workflow.Builder do
   @type t :: %__MODULE__{
           steps: %{atom() => Step.t()},
           edges: [Edge.t()],
-          errors: [Error.t()]
+          errors: [Error.t()],
+          step_defaults: keyword()
         }
 
-  defstruct steps: %{}, edges: [], errors: []
+  defstruct steps: %{}, edges: [], errors: [], step_defaults: []
+
+  @allowed_step_defaults [:timeout, :retry]
 
   @doc """
   Creates a new empty builder.
   """
   @spec new() :: t()
   def new, do: %__MODULE__{}
+
+  @doc """
+  Creates a new builder with options.
+
+  ## Options
+
+    * `:step_defaults` — keyword list of default options applied to all steps.
+      Only `:timeout` and `:retry` are allowed. Per-step options override defaults.
+
+  ## Examples
+
+      Builder.new(step_defaults: [timeout: 30_000, retry: 2])
+
+  """
+  @spec new(keyword()) :: t()
+  def new(opts) when is_list(opts) do
+    defaults = Keyword.get(opts, :step_defaults, [])
+
+    case validate_step_defaults(defaults) do
+      :ok -> %__MODULE__{step_defaults: defaults}
+      {:error, error} -> %__MODULE__{errors: [error]}
+    end
+  end
+
+  def new(_opts) do
+    error = Error.new(:workflow_error, "Builder.new/1 expects a keyword list")
+    %__MODULE__{errors: [error]}
+  end
 
   @doc """
   Adds a step to the builder.
@@ -60,12 +91,21 @@ defmodule Agora.Workflow.Builder do
       error = Error.new(:workflow_error, "Step #{inspect(id)} already exists")
       %{builder | errors: [error | builder.errors]}
     else
-      case Step.new(Keyword.merge(opts, id: id, handler: handler)) do
-        {:ok, step} ->
-          %{builder | steps: Map.put(builder.steps, id, step)}
-
+      case normalize_step_opts(opts) do
         {:error, error} ->
           %{builder | errors: [error | builder.errors]}
+
+        {:ok, cleaned_opts, condition_info} ->
+          effective_opts = Keyword.merge(builder.step_defaults, cleaned_opts)
+
+          case Step.new(Keyword.merge(effective_opts, id: id, handler: handler)) do
+            {:ok, step} ->
+              builder = %{builder | steps: Map.put(builder.steps, id, step)}
+              maybe_add_condition_edge(builder, id, condition_info)
+
+            {:error, error} ->
+              %{builder | errors: [error | builder.errors]}
+          end
       end
     end
   end
@@ -152,6 +192,39 @@ defmodule Agora.Workflow.Builder do
         {:error, error} -> %{acc | errors: [error | acc.errors]}
       end
     end)
+  end
+
+  # --- Private: Step option normalization ---
+
+  defp normalize_step_opts(opts) do
+    {:ok, opts, nil}
+  end
+
+  defp maybe_add_condition_edge(builder, _id, nil), do: builder
+
+  defp maybe_add_condition_edge(builder, id, {from, condition_fn}) do
+    case Edge.new(from: from, to: id, condition: condition_fn) do
+      {:ok, edge} -> add_edge(builder, edge)
+      {:error, error} -> %{builder | errors: [error | builder.errors]}
+    end
+  end
+
+  defp validate_step_defaults(defaults) when is_list(defaults) do
+    invalid = Keyword.keys(defaults) -- @allowed_step_defaults
+
+    if invalid == [] do
+      :ok
+    else
+      {:error,
+       Error.new(
+         :workflow_error,
+         "step_defaults only accepts :timeout and :retry, got: #{inspect(invalid)}"
+       )}
+    end
+  end
+
+  defp validate_step_defaults(_other) do
+    {:error, Error.new(:workflow_error, "step_defaults must be a keyword list")}
   end
 
   defp add_edge(%__MODULE__{} = builder, %Edge{} = edge) do
