@@ -18,7 +18,7 @@ mix dialyzer          # Static type analysis (slow first run, cached after)
 
 ## Architecture
 
-Agora is a multi-agent runtime framework for Elixir. It follows a phased implementation plan (`TODO.md`) building toward orchestrated AI agents on the BEAM.
+Agora is a multi-agent runtime framework for Elixir. All 10 implementation phases are complete. See `docs/internal/TODO.md` for the roadmap and `docs/internal/adr.md` for design decisions.
 
 ### Core Data Flow
 
@@ -65,7 +65,7 @@ config = AgentConfig.new!(
 
 ## Current Status
 
-Phases 0–10 complete. See `TODO.md` for the full 10-phase roadmap and `docs/Design-v0.md` for architecture principles.
+Phases 0–10 complete. See `docs/internal/TODO.md` for the full roadmap, `docs/internal/adr.md` for design decisions, and `docs/internal/Design-v0.md` for architecture principles.
 
 ### Top-Level API & Release (Phase 10)
 

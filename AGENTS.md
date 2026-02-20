@@ -6,7 +6,7 @@ Guidance for coding agents working in this repository.
 
 - This project is an Elixir library (`:agora`) targeting Elixir `~> 1.19`.
 - Phases 0-10 are complete; current focus is stabilization, docs quality, and release readiness.
-- Architecture references live in `TODO.md`, `CLAUDE.md`, and `docs/Design-v0.md`.
+- Architecture references live in `docs/internal/TODO.md`, `docs/internal/adr.md`, `CLAUDE.md`, and `docs/internal/Design-v0.md`.
 
 ## Current Status
 
@@ -159,7 +159,7 @@ mix run examples/workflow.exs
 
 - Make minimal, targeted edits; preserve existing style and naming.
 - Do not introduce new dependencies without strong justification.
-- Do not rewrite architecture opportunistically; follow established decisions documented in `TODO.md` and `docs/Design-v0.md`.
+- Do not rewrite architecture opportunistically; follow established decisions documented in `docs/internal/adr.md` and `docs/internal/Design-v0.md`.
 - When adding new modules, mirror existing test layout under `test/agora/...`.
 - If adding public API, add tests + specs + docs in the same change.
 

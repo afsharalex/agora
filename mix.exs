@@ -65,7 +65,7 @@ defmodule Agora.MixProject do
       extras: [
         {"README.md", title: "Overview"},
         {"CHANGELOG.md", title: "Changelog"},
-        {"docs/Design-v0.md", title: "Design Document"},
+        {"docs/internal/Design-v0.md", title: "Design Document"},
         {"guides/getting-started.md", title: "Getting Started"},
         {"guides/architecture.md", title: "Architecture"},
         {"guides/providers.md", title: "Providers"},

@@ -17,8 +17,8 @@
   <a href="#workflows">Workflows</a> |
   <a href="#observability">Observability</a> |
   <a href="#architecture">Architecture</a> |
-  <a href="docs/Design-v0.md">Design Doc</a> |
-  <a href="TODO.md">Roadmap</a>
+  <a href="docs/internal/Design-v0.md">Design Doc</a> |
+  <a href="docs/internal/TODO.md">Roadmap</a>
 </p>
 
 ---
@@ -675,7 +675,7 @@ config = AgentConfig.new!(
 
 ## Roadmap
 
-Agora follows a 10-phase implementation plan. See [TODO.md](TODO.md) for full details.
+Agora follows a 10-phase implementation plan. See [docs/internal/TODO.md](docs/internal/TODO.md) for the full completed roadmap.
 
 | Phase | Name | Status |
 |-------|------|--------|
