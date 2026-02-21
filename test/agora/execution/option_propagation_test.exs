@@ -181,6 +181,72 @@ defmodule Agora.Execution.OptionPropagationTest do
 
       assert {:ok, _} = results[:step1]
     end
+
+    test ":sequential mode passes cancel_token through" do
+      token = CancelToken.new()
+      CancelToken.cancel(token)
+
+      steps = [{:a, fn _r -> {:ok, "should not run"} end}]
+
+      assert {:error, %Error{type: :cancelled}} =
+               Agora.run_mode(:sequential, steps, cancel_token: token)
+    end
+
+    test ":parallel mode passes telemetry_metadata through" do
+      ref = make_ref()
+      parent = self()
+      trace_id = "opt-prop-parallel-#{inspect(ref)}"
+
+      :telemetry.attach(
+        "opt-prop-parallel-#{inspect(ref)}",
+        [:agora, :workflow, :run, :start],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:trace_id] == trace_id do
+            send(parent, {:got_meta, ref})
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach("opt-prop-parallel-#{inspect(ref)}") end)
+
+      branches = [{:a, fn _r -> {:ok, 1} end}]
+
+      {:ok, _} =
+        Agora.run_mode(:parallel, branches,
+          telemetry_metadata: %{trace_id: trace_id}
+        )
+
+      assert_receive {:got_meta, ^ref}
+    end
+
+    test ":conditional mode passes context_policy through to AgentConfig step" do
+      test_pid = self()
+
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              send(test_pid, :agent_called)
+              {:ok, Message.assistant("done")}
+            end
+          ]
+        )
+
+      policy = ContextPolicy.new!(strategy: :sliding_window, window_size: 5)
+
+      input = {
+        {:router, fn _r -> {:ok, :go} end},
+        [{fn _r -> true end, {:agent_step, config, input_mapper: fn _r -> "Hello" end}}]
+      }
+
+      {:ok, _} = Agora.run_mode(:conditional, input, context_policy: policy)
+
+      assert_receive :agent_called
+    end
   end
 
   describe "combined options" do
