@@ -1,11 +1,11 @@
 # Multi-Agent Orchestration Example
 #
 # Demonstrates RoundRobin orchestration with multiple agents
-# using explicit termination conditions.
+# using the unified run_mode/3 API and explicit termination conditions.
 #
 # Run with: mix run examples/multi_agent.exs
 
-alias Agora.{AgentConfig, Orchestrator.Runner, Orchestrator.TerminationCondition}
+alias Agora.{AgentConfig, Orchestrator.TerminationCondition}
 
 # Define agent configs -- each uses Echo :static mode with a different response
 researcher_config = AgentConfig.new!(
@@ -31,9 +31,7 @@ agents = %{
 
 IO.puts("=== Multi-Agent Orchestration (RoundRobin) ===\n")
 
-# Start the runner with RoundRobin orchestration and a keyword termination condition
-{:ok, runner} = Runner.start_link(
-  orchestrator: Agora.Orchestrator.RoundRobin,
+{:ok, response} = Agora.run_mode(:round_robin, "Research and write about BEAM concurrency",
   agents: agents,
   termination: TerminationCondition.any_of([
     TerminationCondition.max_turns(3),
@@ -41,10 +39,16 @@ IO.puts("=== Multi-Agent Orchestration (RoundRobin) ===\n")
   ])
 )
 
-{:ok, response} = Runner.run(runner, "Research and write about BEAM concurrency")
-
 IO.puts("Final response: #{response.content}")
 IO.puts("\n[Orchestration complete]")
 
-# Cleanup
-Agora.stop_runner(runner)
+# For direct Runner lifecycle management (advanced), use:
+#
+#   alias Agora.Orchestrator.Runner
+#   {:ok, runner} = Runner.start_link(
+#     orchestrator: Agora.Orchestrator.RoundRobin,
+#     agents: agents,
+#     termination: TerminationCondition.any_of([...])
+#   )
+#   {:ok, response} = Runner.run(runner, "...")
+#   Agora.stop_runner(runner)
