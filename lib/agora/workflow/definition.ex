@@ -400,13 +400,25 @@ defmodule Agora.Workflow.Definition do
       if Keyword.has_key?(opts, :inputs) do
         inputs = opts[:inputs]
 
-        unless is_list(inputs) do
-          raise CompileError,
-            file: env.file,
-            line: env.line,
-            description:
-              "step #{inspect(step_id)} :inputs must be a list of atoms, " <>
-                "got: #{inspect(inputs)}. Use :after for a single dependency"
+        cond do
+          not is_list(inputs) ->
+            raise CompileError,
+              file: env.file,
+              line: env.line,
+              description:
+                "step #{inspect(step_id)} :inputs must be a list of atoms, " <>
+                  "got: #{inspect(inputs)}. Use :after for a single dependency"
+
+          not Enum.all?(inputs, &is_atom/1) ->
+            raise CompileError,
+              file: env.file,
+              line: env.line,
+              description:
+                "step #{inspect(step_id)} :inputs must be a list of atoms, " <>
+                  "got: #{inspect(inputs)}"
+
+          true ->
+            :ok
         end
       end
     end)
@@ -414,14 +426,21 @@ defmodule Agora.Workflow.Definition do
 
   defp validate_parallel_opts!(parallels, env) do
     Enum.each(parallels, fn {_ids, opts} ->
-      has_from = Keyword.has_key?(opts, :from)
-      has_to = Keyword.has_key?(opts, :to)
+      if Keyword.keyword?(opts) do
+        has_from = Keyword.has_key?(opts, :from)
+        has_to = Keyword.has_key?(opts, :to)
 
-      unless has_from or has_to do
+        unless has_from or has_to do
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description: "parallel/2 requires at least one of :from or :to"
+        end
+      else
         raise CompileError,
           file: env.file,
           line: env.line,
-          description: "parallel/2 requires at least one of :from or :to"
+          description: "parallel/2 options must be a keyword list, got: #{inspect(opts)}"
       end
     end)
   end

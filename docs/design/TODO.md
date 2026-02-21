@@ -422,8 +422,8 @@ end
 - [x] **20.2** Read accumulated `@__agora_steps__` and `@__agora_edges__` from module
 - [x] **20.3** Construct Builder pipeline from accumulated data
 - [x] **20.4** Apply module-level `step_defaults` from `use` options
-- [x] **20.5** Call `Builder.build!/1` at compile time — compile errors surface as readable messages
-- [x] **20.6** Generate `__workflow__/0` function returning the compiled `%Workflow{}` struct
+- [x] **20.5** Compile-time structural validation (cycles, endpoints, duplicates, inputs format, parallel opts, condition constraints) — surfaces as readable compile errors. Note: `Builder.build!` runs at runtime in `__workflow__/0` because function references cannot be embedded as BEAM literals; compile-time checks replicate Builder's graph-level validations.
+- [x] **20.6** Generate `__workflow__/0` function that constructs `%Workflow{}` at runtime via Builder pipeline
 - [x] **20.7** Generate `__workflow_steps__/0` returning list of step IDs (introspection helper)
 - [x] **20.8** Tests: `__workflow__/0` returns valid `%Workflow{}`
 - [x] **20.9** Tests: `__workflow_steps__/0` returns step IDs in definition order

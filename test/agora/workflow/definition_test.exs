@@ -514,6 +514,17 @@ defmodule Agora.Workflow.DefinitionTest do
       end
     end
 
+    test "inputs: list with non-atoms raises CompileError" do
+      assert_raise CompileError, ~r/:inputs must be a list of atoms/, fn ->
+        defmodule NonAtomInputModule do
+          use Agora.Workflow.Definition
+
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, inputs: [1], run: fn _ -> {:ok, 2} end)
+        end
+      end
+    end
+
     test "parallel without :from or :to raises CompileError" do
       assert_raise CompileError, ~r/requires at least one of :from or :to/, fn ->
         defmodule BadParallelModule do
