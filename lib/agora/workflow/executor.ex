@@ -20,6 +20,9 @@ defmodule Agora.Workflow.Executor do
     * `:on_failure` — `:abort` (default) or `:skip`
     * `:checkpoint_store` — `{module, keyword()}` tuple for checkpoint persistence
     * `:supervisor` — Task.Supervisor name (default: `Agora.WorkflowTaskSupervisor`)
+    * `:cancel_token` — `%CancelToken{}` for boundary-cooperative cancellation
+    * `:context_policy` — `%ContextPolicy{}` injected into AgentConfig step handlers
+    * `:telemetry_metadata` — `map()` merged into workflow and step telemetry events
 
   ## Checkpoint Semantics
 
@@ -27,9 +30,15 @@ defmodule Agora.Workflow.Executor do
   A failed checkpoint write means the resumability guarantee is broken, so the
   executor surfaces it as `{:error, %Error{}}` even in `:skip` mode.
 
+  ## Cancellation Semantics
+
+  Cancellation is checked at two boundaries: before each level starts and inside
+  each spawned task before step execution. Cancelled steps are never retried,
+  and cancellation is globally terminal regardless of `:on_failure` mode.
+
   """
 
-  alias Agora.{AgentConfig, Error, Workflow}
+  alias Agora.{AgentConfig, CancelToken, ContextPolicy, Error, Workflow}
   alias Agora.Workflow.{CheckpointStore, Step}
 
   @default_supervisor Agora.WorkflowTaskSupervisor
@@ -46,14 +55,16 @@ defmodule Agora.Workflow.Executor do
   def run(%Workflow{} = workflow, opts \\ []) do
     workflow_id = System.unique_integer([:positive])
     step_count = map_size(workflow.steps)
+    telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
 
     Agora.Telemetry.span(
       [:agora, :workflow, :run],
-      %{workflow_id: workflow_id, step_count: step_count},
+      Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count}),
       fn ->
         result = do_run(workflow, opts)
 
-        stop_meta = %{workflow_id: workflow_id, step_count: step_count}
+        stop_meta =
+          Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count})
 
         stop_meta =
           case result do
@@ -68,23 +79,21 @@ defmodule Agora.Workflow.Executor do
 
   defp do_run(workflow, opts) do
     input = Keyword.get(opts, :input)
-    on_failure = Keyword.get(opts, :on_failure, :abort)
-    supervisor = Keyword.get(opts, :supervisor, @default_supervisor)
     checkpoint_config = Keyword.get(opts, :checkpoint_store)
+
+    run_ctx = %{
+      on_failure: Keyword.get(opts, :on_failure, :abort),
+      supervisor: Keyword.get(opts, :supervisor, @default_supervisor),
+      cancel_token: Keyword.get(opts, :cancel_token),
+      context_policy: Keyword.get(opts, :context_policy),
+      telemetry_metadata: Keyword.get(opts, :telemetry_metadata, %{})
+    }
 
     with {:ok, checkpoint_state} <- init_checkpoint(checkpoint_config),
          {:ok, levels} <- compute_levels(workflow),
          {:ok, checkpointed} <- load_checkpoint(checkpoint_state, workflow) do
       initial_results = Map.put(checkpointed, :input, input)
-
-      execute_levels(
-        levels,
-        workflow,
-        initial_results,
-        on_failure,
-        supervisor,
-        checkpoint_state
-      )
+      execute_levels(levels, workflow, initial_results, run_ctx, checkpoint_state)
     end
   end
 
@@ -162,18 +171,27 @@ defmodule Agora.Workflow.Executor do
 
   # --- Level execution ---
 
-  defp execute_levels([], _workflow, results, _on_failure, _supervisor, _checkpoint) do
+  defp execute_levels([], _workflow, results, _run_ctx, _checkpoint) do
     {:ok, Map.delete(results, :input)}
   end
 
-  defp execute_levels([level | rest], workflow, results, on_failure, supervisor, checkpoint) do
+  defp execute_levels([level | rest], workflow, results, run_ctx, checkpoint) do
+    # Check cancellation before each level
+    if cancelled?(run_ctx) do
+      {:error, Error.new(:cancelled, "Workflow execution cancelled")}
+    else
+      execute_level(level, rest, workflow, results, run_ctx, checkpoint)
+    end
+  end
+
+  defp execute_level(level, rest, workflow, results, run_ctx, checkpoint) do
     {runnable, skipped} = partition_level(level, workflow, results)
 
     # Add skipped steps to results
     results = Enum.reduce(skipped, results, fn id, acc -> Map.put(acc, id, :skipped) end)
 
     if runnable == [] do
-      execute_levels(rest, workflow, results, on_failure, supervisor, checkpoint)
+      execute_levels(rest, workflow, results, run_ctx, checkpoint)
     else
       level_start = System.monotonic_time(:millisecond)
 
@@ -183,8 +201,12 @@ defmodule Agora.Workflow.Executor do
           step = Map.fetch!(workflow.steps, step_id)
 
           task =
-            Task.Supervisor.async_nolink(supervisor, fn ->
-              execute_step(step, results)
+            Task.Supervisor.async_nolink(run_ctx.supervisor, fn ->
+              if cancelled?(run_ctx) do
+                {:error, Error.new(:cancelled, "Step cancelled")}
+              else
+                execute_step(step, results, run_ctx)
+              end
             end)
 
           {task, step}
@@ -195,18 +217,22 @@ defmodule Agora.Workflow.Executor do
 
       # Process outcomes
       {new_results, checkpoint, error} =
-        process_outcomes(step_outcomes, results, checkpoint, on_failure)
+        process_outcomes(step_outcomes, results, checkpoint, run_ctx)
 
       case error do
         nil ->
-          execute_levels(rest, workflow, new_results, on_failure, supervisor, checkpoint)
+          execute_levels(rest, workflow, new_results, run_ctx, checkpoint)
 
         %Error{} = err ->
-          # In abort mode, return all results collected so far (including failures)
           {:error, err}
       end
     end
   end
+
+  # --- Cancellation check ---
+
+  defp cancelled?(%{cancel_token: nil}), do: false
+  defp cancelled?(%{cancel_token: token}), do: CancelToken.cancelled?(token)
 
   # --- Step partitioning (conditional edge resolution) ---
 
@@ -293,14 +319,15 @@ defmodule Agora.Workflow.Executor do
 
   # --- Step execution with retry ---
 
-  defp execute_step(step, results) do
+  defp execute_step(step, results, run_ctx) do
     Agora.Telemetry.span(
       [:agora, :workflow, :step],
-      %{step_id: step.id, step_name: step.name},
+      Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name}),
       fn ->
-        result = execute_with_retry(step, results, step.retry)
+        result = execute_with_retry(step, results, step.retry, run_ctx)
 
-        stop_meta = %{step_id: step.id, step_name: step.name}
+        stop_meta =
+          Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name})
 
         stop_meta =
           case result do
@@ -313,13 +340,17 @@ defmodule Agora.Workflow.Executor do
     )
   end
 
-  defp execute_with_retry(step, results, retries_left) do
-    case execute_handler(step, results) do
+  defp execute_with_retry(step, results, retries_left, run_ctx) do
+    case execute_handler(step, results, run_ctx) do
       {:ok, _} = success ->
         success
 
+      # Cancelled steps are never retried
+      {:error, %Error{type: :cancelled}} = error ->
+        error
+
       {:error, %Error{}} when retries_left > 0 ->
-        execute_with_retry(step, results, retries_left - 1)
+        execute_with_retry(step, results, retries_left - 1, run_ctx)
 
       {:error, %Error{}} = error ->
         error
@@ -327,7 +358,7 @@ defmodule Agora.Workflow.Executor do
       {:error, other} when retries_left > 0 ->
         # Non-Error term — normalize and retry
         _ = other
-        execute_with_retry(step, results, retries_left - 1)
+        execute_with_retry(step, results, retries_left - 1, run_ctx)
 
       {:error, other} ->
         {:error,
@@ -346,7 +377,7 @@ defmodule Agora.Workflow.Executor do
   rescue
     exception ->
       if retries_left > 0 do
-        execute_with_retry(step, results, retries_left - 1)
+        execute_with_retry(step, results, retries_left - 1, run_ctx)
       else
         {:error,
          Error.new(
@@ -357,7 +388,7 @@ defmodule Agora.Workflow.Executor do
   catch
     kind, value ->
       if retries_left > 0 do
-        execute_with_retry(step, results, retries_left - 1)
+        execute_with_retry(step, results, retries_left - 1, run_ctx)
       else
         {:error,
          Error.new(
@@ -367,11 +398,13 @@ defmodule Agora.Workflow.Executor do
       end
   end
 
-  defp execute_handler(%Step{handler: handler}, results) when is_function(handler, 1) do
+  defp execute_handler(%Step{handler: handler}, results, _run_ctx)
+       when is_function(handler, 1) do
     handler.(results)
   end
 
-  defp execute_handler(%Step{handler: %AgentConfig{} = config} = step, results) do
+  defp execute_handler(%Step{handler: %AgentConfig{} = config} = step, results, run_ctx) do
+    config = maybe_inject_context_policy(config, run_ctx.context_policy)
     message = build_agent_message(step, results)
 
     case Agora.Agent.Supervisor.start_agent(config) do
@@ -391,6 +424,21 @@ defmodule Agora.Workflow.Executor do
           "Failed to start agent for step #{inspect(step.id)}: #{inspect(reason)}"
         )
     end
+  end
+
+  defp maybe_inject_context_policy(config, nil), do: config
+  defp maybe_inject_context_policy(config, %ContextPolicy{strategy: :none}), do: config
+
+  defp maybe_inject_context_policy(config, %ContextPolicy{} = policy) do
+    compaction_mw = fn ctx, next ->
+      if ctx.hook == :before_provider_call do
+        next.(%{ctx | messages: ContextPolicy.apply(policy, ctx.messages)})
+      else
+        next.(ctx)
+      end
+    end
+
+    %{config | middleware: [compaction_mw | config.middleware]}
   end
 
   defp build_agent_message(%Step{input_mapper: mapper}, results) when is_function(mapper, 1) do
@@ -432,7 +480,7 @@ defmodule Agora.Workflow.Executor do
 
   # --- Outcome processing ---
 
-  defp process_outcomes(step_outcomes, results, checkpoint, on_failure) do
+  defp process_outcomes(step_outcomes, results, checkpoint, run_ctx) do
     Enum.reduce(step_outcomes, {results, checkpoint, nil}, fn
       {step, outcome}, {results, checkpoint, error} ->
         results = Map.put(results, step.id, outcome)
@@ -457,10 +505,13 @@ defmodule Agora.Workflow.Executor do
               {checkpoint, nil}
           end
 
-        # Track first error: step failure respects on_failure mode,
-        # but checkpoint save failure is always fatal (integrity guarantee)
+        # Track first error: cancellation is always terminal,
+        # step failure respects on_failure mode,
+        # checkpoint save failure is always fatal (integrity guarantee)
         error =
-          case {outcome, on_failure, error, save_error} do
+          case {outcome, run_ctx.on_failure, error, save_error} do
+            # Cancellation is always terminal regardless of on_failure mode
+            {{:error, %Error{type: :cancelled} = err}, _, nil, _} -> err
             {{:error, err}, :abort, nil, _} -> err
             {_, _, nil, %Error{} = se} -> se
             _ -> error
