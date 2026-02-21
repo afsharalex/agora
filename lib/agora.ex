@@ -191,7 +191,17 @@ defmodule Agora do
     case Code.ensure_loaded(module) do
       {:module, ^module} ->
         if function_exported?(module, :__workflow__, 0) do
-          Agora.Workflow.Executor.run(module.__workflow__(), opts)
+          try do
+            workflow = module.__workflow__()
+            Agora.Workflow.Executor.run(workflow, opts)
+          rescue
+            e ->
+              {:error,
+               Error.new(
+                 :workflow_error,
+                 "#{inspect(module)}.__workflow__/0 raised: #{Exception.message(e)}"
+               )}
+          end
         else
           {:error,
            Error.new(

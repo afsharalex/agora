@@ -422,8 +422,8 @@ Each workflow module defines:
 | `Builder.sequence/2` | Chain step IDs into linear edges |
 | `Builder.chain/2` | Define steps and wire them in a linear pipeline |
 | `Builder.parallel/3` | Fan-out from one step, fan-in to another |
-| `Builder.build/1` | Build workflow, return `{:ok, workflow} \| {:error, errors}` |
-| `Builder.build!/1` | Build workflow or raise on validation error |
+| `Builder.build/1,2` | Build workflow, return `{:ok, workflow} \| {:error, errors}`. Optional opts: `skip_cycle_check: true` |
+| `Builder.build!/1,2` | Build workflow or raise on validation error. Accepts same opts as `build/2` |
 
 ## Telemetry
 

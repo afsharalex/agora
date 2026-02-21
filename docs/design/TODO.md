@@ -363,7 +363,7 @@ end
 
 ### 18. Module-level `step` macro
 
-Accumulates step definitions via module attributes. Handlers become private functions.
+Accumulates step definitions via module attributes. Handlers become public `@doc false` functions (enables isolated step testing per TODO 23.1).
 
 ```elixir
 # User writes:
@@ -375,21 +375,22 @@ end
 @__agora_steps__ {
   :fetch,
   [timeout: 10_000],
-  :__agora_step_fetch__  # name of generated private function
+  :__agora_step_fetch__  # name of generated function
 }
 
-defp __agora_step_fetch__(results) do
+@doc false
+def __agora_step_fetch__(results) do
   _ = results
   {:ok, get_users()}
 end
 ```
 
-- [x] **18.1** Implement `step` macro with `do` block — generate private function, accumulate step metadata
-- [x] **18.2** Private function naming: `__agora_step_<id>__/1` to avoid user namespace collisions
+- [x] **18.1** Implement `step` macro with `do` block — generate `@doc false` public function, accumulate step metadata
+- [x] **18.2** Function naming: `__agora_step_<id>__/1` to avoid user namespace collisions
 - [x] **18.3** Inject `results` parameter (or `_results` if unused)
 - [x] **18.4** Support `run:` keyword form — store function ref directly, no private function generated
 - [x] **18.5** Support all Phase 1 step options: `after:`, `condition:`/`when:`, `timeout:`, `retry:`
-- [x] **18.6** Tests: `do` block step generates callable private function
+- [x] **18.6** Tests: `do` block step generates callable `@doc false` public function
 - [x] **18.7** Tests: `run:` keyword step stores function reference
 - [x] **18.8** Tests: step options passed through correctly
 - [x] **18.9** Tests: multiple steps accumulate in definition order

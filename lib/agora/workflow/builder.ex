@@ -448,7 +448,9 @@ defmodule Agora.Workflow.Builder do
 
   """
   @spec build(t(), keyword()) :: {:ok, Workflow.t()} | {:error, Error.t()}
-  def build(%__MODULE__{} = builder, opts \\ []) do
+  def build(builder, opts \\ [])
+
+  def build(%__MODULE__{} = builder, opts) when is_list(opts) do
     with :ok <- check_errors(builder) do
       builder = merge_input_edges(builder)
 
@@ -463,6 +465,10 @@ defmodule Agora.Workflow.Builder do
          }}
       end
     end
+  end
+
+  def build(%__MODULE__{}, _opts) do
+    Error.wrap(:workflow_error, "Builder.build/2 opts must be a keyword list")
   end
 
   defp check_errors(%{errors: []}), do: :ok

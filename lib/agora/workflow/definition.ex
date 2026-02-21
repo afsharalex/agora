@@ -342,6 +342,7 @@ defmodule Agora.Workflow.Definition do
     known_ids = MapSet.new(step_ids)
 
     validate_unique_steps!(step_ids, env)
+    validate_step_conditions!(steps, env)
     all_edges = resolve_all_edges(steps, edges, sequences, parallels, env)
     validate_endpoints!(all_edges, known_ids, env)
     validate_no_self_loops!(all_edges, env)
@@ -387,6 +388,42 @@ defmodule Agora.Workflow.Definition do
       end
 
       MapSet.put(seen, id)
+    end)
+  end
+
+  defp validate_step_conditions!(steps, env) do
+    Enum.each(steps, fn {step_id, opts, _handler} ->
+      opts = eval_opts_for_validation(opts)
+
+      has_condition = Keyword.has_key?(opts, :condition)
+      has_when = Keyword.has_key?(opts, :when)
+
+      if has_condition and has_when do
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description: "step #{inspect(step_id)} cannot have both :condition and :when"
+      end
+
+      if has_condition or has_when do
+        inputs = resolve_inputs(opts)
+
+        if inputs == [] do
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "step #{inspect(step_id)} has :condition/:when but no :after or :inputs dependency"
+        end
+
+        if length(inputs) > 1 do
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "step #{inspect(step_id)} has :condition/:when with multiple dependencies; use edge/3 instead"
+        end
+      end
     end)
   end
 
@@ -455,17 +492,21 @@ defmodule Agora.Workflow.Definition do
   end
 
   defp resolve_inputs(opts) do
-    cond do
-      Keyword.has_key?(opts, :after) ->
-        after_val = opts[:after]
-        if is_atom(after_val), do: [after_val], else: after_val
+    raw =
+      cond do
+        Keyword.has_key?(opts, :after) ->
+          after_val = opts[:after]
+          if is_atom(after_val), do: [after_val], else: after_val
 
-      Keyword.has_key?(opts, :inputs) ->
-        opts[:inputs]
+        Keyword.has_key?(opts, :inputs) ->
+          opts[:inputs]
 
-      true ->
-        []
-    end
+        true ->
+          []
+      end
+
+    # Guard: always return a list even if user passes inputs: :atom
+    if is_list(raw), do: raw, else: [raw]
   end
 
   defp validate_endpoints!(edges, known_ids, env) do

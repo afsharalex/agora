@@ -813,6 +813,15 @@ defmodule Agora.Workflow.BuilderTest do
       assert map_size(workflow.steps) == 2
     end
 
+    test "build/2 with non-list opts returns error" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+
+      assert {:error, error} = Builder.build(builder, :not_a_list)
+      assert error.message =~ "keyword list"
+    end
+
     test "build!/2 without skip raises on cycle" do
       builder =
         Builder.new()

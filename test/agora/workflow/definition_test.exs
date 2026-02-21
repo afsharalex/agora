@@ -459,6 +459,61 @@ defmodule Agora.Workflow.DefinitionTest do
       end
     end
 
+    test "step with both condition: and when: raises CompileError" do
+      assert_raise CompileError, ~r/cannot have both :condition and :when/, fn ->
+        defmodule CondWhenStepModule do
+          use Agora.Workflow.Definition
+
+          step(:a, run: fn _ -> {:ok, 1} end)
+
+          step(:b,
+            after: :a,
+            condition: fn _ -> true end,
+            when: fn _ -> false end,
+            run: fn _ -> {:ok, 2} end
+          )
+        end
+      end
+    end
+
+    test "step with condition: but no dependency raises CompileError" do
+      assert_raise CompileError, ~r/no :after or :inputs dependency/, fn ->
+        defmodule CondNoDepModule do
+          use Agora.Workflow.Definition
+
+          step(:a, condition: fn _ -> true end, run: fn _ -> {:ok, 1} end)
+        end
+      end
+    end
+
+    test "step with condition: and multiple dependencies raises CompileError" do
+      assert_raise CompileError, ~r/multiple dependencies.*use edge\/3/, fn ->
+        defmodule CondMultiDepModule do
+          use Agora.Workflow.Definition
+
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+
+          step(:c,
+            inputs: [:a, :b],
+            condition: fn _ -> true end,
+            run: fn _ -> {:ok, 3} end
+          )
+        end
+      end
+    end
+
+    test "malformed inputs: single atom instead of list" do
+      # Should not crash — normalizes to list and validates
+      assert_raise CompileError, ~r/unknown step IDs/, fn ->
+        defmodule MalformedInputModule do
+          use Agora.Workflow.Definition
+
+          step(:a, inputs: :nonexistent, run: fn _ -> {:ok, 1} end)
+        end
+      end
+    end
+
     test "valid workflow compiles without warnings" do
       output =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
@@ -623,6 +678,19 @@ defmodule Agora.Workflow.DefinitionTest do
       # With on_failure: :skip, the workflow should still succeed
       {:ok, results} = Agora.run_workflow(RunWorkflowOptsModule, on_failure: :skip)
       assert results[:a] == {:ok, 1}
+    end
+
+    test "returns error when __workflow__/0 raises" do
+      defmodule RaisingWorkflowModule do
+        def __workflow__ do
+          raise "boom"
+        end
+      end
+
+      assert {:error, error} = Agora.run_workflow(RaisingWorkflowModule)
+      assert error.type == :workflow_error
+      assert error.message =~ "__workflow__/0 raised"
+      assert error.message =~ "boom"
     end
 
     test "existing struct form still works" do
