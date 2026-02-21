@@ -119,6 +119,71 @@ defmodule Agora.ExecutionTest do
     end
   end
 
+  describe "run_workflow/3 — :sequential mode" do
+    test "dispatches sequential with step list" do
+      steps = [
+        {:a, fn _r -> {:ok, 1} end},
+        {:b, fn r -> {:ok, elem(r[:a], 1) + 1} end}
+      ]
+
+      {:ok, results} = Execution.run_workflow(:sequential, steps)
+      assert results[:a] == {:ok, 1}
+      assert results[:b] == {:ok, 2}
+    end
+
+    test "returns config_error for non-list input" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Execution.run_workflow(:sequential, :not_a_list)
+
+      assert msg =~ ":sequential mode expects a list"
+    end
+  end
+
+  describe "run_workflow/3 — :conditional mode" do
+    test "dispatches conditional with router and branches" do
+      input = {
+        {:router, fn _r -> {:ok, :go} end},
+        [{fn _r -> true end, {:branch, fn _r -> {:ok, "done"} end}}]
+      }
+
+      {:ok, results} = Execution.run_workflow(:conditional, input)
+      assert results[:router] == {:ok, :go}
+      assert results[:branch] == {:ok, "done"}
+    end
+
+    test "returns config_error for non-tuple input" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Execution.run_workflow(:conditional, "bad input")
+
+      assert msg =~ ":conditional mode expects"
+    end
+  end
+
+  describe "run_workflow/3 — :parallel mode" do
+    test "dispatches parallel with step list" do
+      branches = [
+        {:a, fn _r -> {:ok, 1} end},
+        {:b, fn _r -> {:ok, 2} end}
+      ]
+
+      {:ok, results} =
+        Execution.run_workflow(:parallel, branches,
+          from: {:src, fn _r -> {:ok, 0} end}
+        )
+
+      assert results[:src] == {:ok, 0}
+      assert results[:a] == {:ok, 1}
+      assert results[:b] == {:ok, 2}
+    end
+
+    test "returns config_error for non-list input" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Execution.run_workflow(:parallel, :not_a_list)
+
+      assert msg =~ ":parallel mode expects a list"
+    end
+  end
+
   describe "orchestrator_modes/0" do
     test "returns known orchestrator modes" do
       modes = Execution.orchestrator_modes()
@@ -131,7 +196,11 @@ defmodule Agora.ExecutionTest do
 
   describe "workflow_modes/0" do
     test "returns known workflow modes" do
-      assert :dag in Execution.workflow_modes()
+      modes = Execution.workflow_modes()
+      assert :dag in modes
+      assert :sequential in modes
+      assert :conditional in modes
+      assert :parallel in modes
     end
   end
 end

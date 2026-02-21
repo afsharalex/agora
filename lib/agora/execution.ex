@@ -5,7 +5,7 @@ defmodule Agora.Execution do
   Provides two entry points:
 
     * `run/3` — for orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`)
-    * `run_workflow/3` — for workflow modes (`:dag`)
+    * `run_workflow/3` — for workflow modes (`:dag`, `:sequential`, `:conditional`, `:parallel`)
 
   This module handles mode resolution, option validation, and lifecycle management
   (starting/stopping temporary Runner processes for orchestrator modes).
@@ -21,9 +21,12 @@ defmodule Agora.Execution do
 
   ## Workflow Modes
 
-  | Mode | Description |
-  |------|-------------|
-  | `:dag` | DAG-based deterministic pipeline |
+  | Mode | Input | Description |
+  |------|-------|-------------|
+  | `:dag` | `Workflow.t()` or module | DAG-based deterministic pipeline |
+  | `:sequential` | `[step_spec()]` | Linear chain topology |
+  | `:conditional` | `{router_spec, [branch_spec()]}` | Router with conditional branches |
+  | `:parallel` | `[step_spec()]` | Fan-out/fan-in topology |
 
   ## Options (Orchestrator Modes)
 
@@ -40,13 +43,14 @@ defmodule Agora.Execution do
     * `:input` — initial input data for workflow steps
     * `:on_failure` — `:abort` or `:skip`
     * `:checkpoint_store` — `{module, keyword()}` for resumability
-    * `:cancel_token` — `%CancelToken{}` (accepted, integration deferred to Phase 2)
-    * `:context_policy` — `%ContextPolicy{}` (accepted, integration deferred to Phase 2)
-    * `:telemetry_metadata` — `map()` (accepted, integration deferred to Phase 2)
+    * `:cancel_token` — `%CancelToken{}` for boundary-cooperative cancellation
+    * `:context_policy` — `%ContextPolicy{}` injected into AgentConfig steps
+    * `:telemetry_metadata` — `map()` merged into telemetry events
 
   """
 
   alias Agora.{ContextPolicy, Error, Message}
+  alias Agora.Workflow.Patterns
 
   @orchestrator_modes %{
     single: Agora.Orchestrator.Single,
@@ -55,7 +59,7 @@ defmodule Agora.Execution do
     supervisor: Agora.Orchestrator.Supervisor
   }
 
-  @workflow_modes [:dag]
+  @workflow_modes [:dag, :sequential, :conditional, :parallel]
 
   @doc """
   Executes an orchestrator mode with the given input.
@@ -76,19 +80,63 @@ defmodule Agora.Execution do
   @doc """
   Executes a workflow mode.
 
-  The `workflow` parameter accepts a `%Agora.Workflow{}` struct or a module atom
-  that implements `Agora.Workflow.Definition`.
+  ## Mode-specific input shapes
 
-  Note: `:cancel_token`, `:context_policy`, and `:telemetry_metadata` options are
-  accepted for forward compatibility but are not yet consumed by the workflow
-  executor. Full integration is planned for Phase 2.
+    * `:dag` — `Workflow.t()` or module implementing `Agora.Workflow.Definition`
+    * `:sequential` — `[step_spec()]` list of step tuples
+    * `:conditional` — `{router_spec, [branch_spec()]}` tuple
+    * `:parallel` — `[step_spec()]` list of step tuples (`:from`/`:to` in opts)
+
   """
-  @spec run_workflow(atom(), Agora.Workflow.t() | module(), keyword()) ::
-          {:ok, map()} | {:error, Error.t()}
+  @spec run_workflow(atom(), term(), keyword()) :: {:ok, map()} | {:error, Error.t()}
   def run_workflow(mode, workflow, opts \\ [])
 
   def run_workflow(:dag, workflow, opts) do
     Agora.run_workflow(workflow, opts)
+  end
+
+  def run_workflow(:sequential, steps, opts) when is_list(steps) do
+    {pattern_opts, exec_opts} = split_pattern_opts(opts, [:step_defaults])
+
+    with {:ok, workflow} <- Patterns.sequential(steps, pattern_opts),
+         do: Agora.run_workflow(workflow, exec_opts)
+  end
+
+  def run_workflow(:sequential, input, _opts) do
+    Error.wrap(
+      :config_error,
+      ":sequential mode expects a list of step specs [{id, handler} | {id, handler, opts}], " <>
+        "got: #{inspect(input)}"
+    )
+  end
+
+  def run_workflow(:conditional, {router, branches}, opts)
+      when is_tuple(router) and is_list(branches) do
+    {pattern_opts, exec_opts} = split_pattern_opts(opts, [:step_defaults, :merge])
+
+    with {:ok, workflow} <- Patterns.conditional(router, branches, pattern_opts),
+         do: Agora.run_workflow(workflow, exec_opts)
+  end
+
+  def run_workflow(:conditional, input, _opts) do
+    Error.wrap(
+      :config_error,
+      ":conditional mode expects {router_spec, [branch_specs]}, got: #{inspect(input)}"
+    )
+  end
+
+  def run_workflow(:parallel, branches, opts) when is_list(branches) do
+    {pattern_opts, exec_opts} = split_pattern_opts(opts, [:step_defaults, :from, :to])
+
+    with {:ok, workflow} <- Patterns.parallel(branches, pattern_opts),
+         do: Agora.run_workflow(workflow, exec_opts)
+  end
+
+  def run_workflow(:parallel, input, _opts) do
+    Error.wrap(
+      :config_error,
+      ":parallel mode expects a list of step specs, got: #{inspect(input)}"
+    )
   end
 
   def run_workflow(mode, _workflow, _opts) do
@@ -212,4 +260,10 @@ defmodule Agora.Execution do
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # Split opts into pattern-builder opts and executor opts.
+  # Pattern keys go to the builder, everything else goes to the executor.
+  defp split_pattern_opts(opts, pattern_keys) do
+    Enum.split_with(opts, fn {k, _v} -> k in pattern_keys end)
+  end
 end

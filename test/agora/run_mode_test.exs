@@ -60,6 +60,52 @@ defmodule Agora.RunModeTest do
       {:ok, results} = Agora.run_mode(:dag, workflow, input: "test")
       assert results[:greet] == {:ok, "hello"}
     end
+
+    test ":sequential mode" do
+      steps = [
+        {:a, fn _r -> {:ok, 1} end},
+        {:b, fn r -> {:ok, elem(r[:a], 1) * 2} end}
+      ]
+
+      {:ok, results} = Agora.run_mode(:sequential, steps)
+      assert results[:a] == {:ok, 1}
+      assert results[:b] == {:ok, 2}
+    end
+
+    test ":conditional mode" do
+      input = {
+        {:router, fn _r -> {:ok, :go_a} end},
+        [
+          {fn r -> r[:router] == {:ok, :go_a} end, {:branch_a, fn _r -> {:ok, "A"} end}},
+          {fn r -> r[:router] == {:ok, :go_b} end, {:branch_b, fn _r -> {:ok, "B"} end}}
+        ]
+      }
+
+      {:ok, results} = Agora.run_mode(:conditional, input)
+      assert results[:branch_a] == {:ok, "A"}
+      assert results[:branch_b] == :skipped
+    end
+
+    test ":parallel mode" do
+      branches = [{:a, fn _r -> {:ok, 1} end}, {:b, fn _r -> {:ok, 2} end}]
+
+      {:ok, results} =
+        Agora.run_mode(:parallel, branches,
+          from: {:src, fn _r -> {:ok, 0} end},
+          to: {:sink, fn r -> {:ok, elem(r[:a], 1) + elem(r[:b], 1)} end}
+        )
+
+      assert results[:sink] == {:ok, 3}
+    end
+
+    test ":sequential with cross-cutting opts forwarded" do
+      token = Agora.CancelToken.new()
+
+      steps = [{:a, fn _r -> {:ok, "done"} end}]
+
+      {:ok, results} = Agora.run_mode(:sequential, steps, cancel_token: token)
+      assert results[:a] == {:ok, "done"}
+    end
   end
 
   describe "run_mode/3 unknown mode" do

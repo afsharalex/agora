@@ -187,7 +187,7 @@ defmodule Agora do
           {:ok, Message.t() | map()} | {:error, Error.t()}
   def run_mode(mode, input, opts \\ [])
 
-  def run_mode(mode, input, opts) when mode in [:dag] do
+  def run_mode(mode, input, opts) when mode in [:dag, :sequential, :conditional, :parallel] do
     Execution.run_workflow(mode, input, opts)
   end
 
