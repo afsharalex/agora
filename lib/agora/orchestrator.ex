@@ -63,6 +63,7 @@ defmodule Agora.Orchestrator do
   @callback next(state :: term(), context()) ::
               {:next, agent_name(), input :: Message.t(), new_state :: term()}
               | {:done, Message.t(), new_state :: term()}
+              | {:error, Error.t(), new_state :: term()}
 
   @callback handle_result(
               state :: term(),

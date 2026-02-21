@@ -940,6 +940,55 @@ defmodule Agora.Orchestrator.RunnerTest do
     end
   end
 
+  describe "next/2 error return" do
+    defmodule ErrorNextOrchestrator do
+      @behaviour Agora.Orchestrator
+
+      @impl true
+      def init(config) do
+        {:ok, %{agent: hd(config.agent_names), error_message: config[:error_message] || "stalled"}}
+      end
+
+      @impl true
+      def next(state, _context) do
+        {:error, Agora.Error.new(:orchestration_error, state.error_message), state}
+      end
+
+      @impl true
+      def handle_result(state, _agent, _result), do: {:done, Agora.Message.assistant(""), state}
+    end
+
+    test "Runner surfaces {:error, ...} from next/2" do
+      agents = %{helper: echo_config()}
+
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: ErrorNextOrchestrator,
+          agents: agents,
+          orchestrator_opts: [error_message: "Plan stalled: all steps blocked"]
+        )
+
+      assert {:error, %Error{type: :orchestration_error, message: msg}} =
+               Runner.run(pid, "Hello")
+
+      assert msg == "Plan stalled: all steps blocked"
+    end
+
+    test "Runner remains alive after next/2 returns error" do
+      agents = %{helper: echo_config()}
+
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: ErrorNextOrchestrator,
+          agents: agents
+        )
+
+      {:error, _} = Runner.run(pid, "Hello")
+      assert Process.alive?(pid)
+      assert Runner.get_status(pid) == :idle
+    end
+  end
+
   describe "cleanup on terminate" do
     test "agents are stopped when runner terminates" do
       agents = %{helper: echo_config()}

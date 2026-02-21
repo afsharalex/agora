@@ -387,6 +387,9 @@ defmodule Agora.Orchestrator.Runner do
               {:done, result, new_orch_state} ->
                 {{:ok, result}, %{state | orchestrator_state: new_orch_state}}
 
+              {:error, error, new_orch_state} ->
+                {{:error, error}, %{state | orchestrator_state: new_orch_state}}
+
               {:next, agent_name, input_msg, new_orch_state} ->
                 state = %{state | orchestrator_state: new_orch_state}
                 run_agent_step(input, turn, agent_name, input_msg, state)
