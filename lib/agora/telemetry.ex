@@ -116,6 +116,17 @@ defmodule Agora.Telemetry do
   The `:memory_error` event fires when memory save or reload fails after a streaming
   run completes. The stream has already been closed (`:done` sent to caller), so this
   error cannot be communicated via the stream. The agent transitions to `:idle` regardless.
+
+  ### Mode Events
+
+  Emitted by `Agora.Orchestrator.Runner` and `Agora.Workflow.Executor` during
+  mode-level execution. These events are always emitted (both sync and streaming paths).
+  The EventBus bridge (`Agora.Telemetry.EventBusBridge`) can forward them to subscribers.
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:agora, :mode, :event]` | `%{system_time}` | `%{event: ModeEvent.t()}` merged with `:telemetry_metadata` |
+  | `[:agora, :mode, :context_compacted]` | `%{system_time}` | `%{strategy, before, after}` merged with `:telemetry_metadata` |
   """
 
   @doc """

@@ -1,6 +1,6 @@
 defmodule Agora.Stream do
   @moduledoc """
-  Enumerable wrapper for consuming streaming events from an agent.
+  Enumerable wrapper for consuming streaming events from an agent or mode execution.
 
   Wraps the process-based streaming protocol into an `Enumerable` so callers
   can use standard `Enum` and `Stream` operations:
@@ -21,20 +21,40 @@ defmodule Agora.Stream do
   Every stream is guaranteed to terminate. The Enumerable receives events
   until either a `:done` or `:error` event arrives, the streaming process
   crashes (detected via monitor), or a safety timeout (300s) expires.
+
+  ## Event Types
+
+  Supports both `StreamEvent` (LLM-level) and `ModeEvent` (orchestration-level)
+  events. Terminal detection uses map pattern matching (`%{type: :done}` /
+  `%{type: :error}`) to work with both event types.
   """
 
   @type t :: %__MODULE__{
           ref: reference(),
           pid: pid(),
-          owner: pid()
+          owner: pid(),
+          error_fn: (Agora.Error.t() -> term()) | nil
         }
 
-  defstruct [:ref, :pid, :owner]
+  defstruct [:ref, :pid, :owner, :error_fn]
 
-  @doc "Creates a new stream handle."
-  @spec new(reference(), pid(), pid()) :: t()
-  def new(ref, pid, owner \\ self()) do
-    %__MODULE__{ref: ref, pid: pid, owner: owner}
+  @doc """
+  Creates a new stream handle.
+
+  ## Options
+
+    * `:error_fn` — function to create error events for `:DOWN` and timeout
+      scenarios. Defaults to `&StreamEvent.error/1`. Pass `&ModeEvent.error/1`
+      for mode-level streams.
+  """
+  @spec new(reference(), pid(), pid(), keyword()) :: t()
+  def new(ref, pid, owner \\ self(), opts \\ []) do
+    %__MODULE__{
+      ref: ref,
+      pid: pid,
+      owner: owner,
+      error_fn: Keyword.get(opts, :error_fn)
+    }
   end
 
   defimpl Enumerable do
@@ -54,39 +74,39 @@ defmodule Agora.Stream do
       end
 
       mref = Process.monitor(stream.pid)
-      result = do_reduce(stream.ref, stream.pid, mref, acc, fun)
+      result = do_reduce(stream.ref, stream.pid, mref, stream.error_fn, acc, fun)
       Process.demonitor(mref, [:flush])
       result
     end
 
-    defp do_reduce(_ref, _pid, _mref, {:halt, acc}, _fun) do
+    defp do_reduce(_ref, _pid, _mref, _error_fn, {:halt, acc}, _fun) do
       {:halted, acc}
     end
 
-    defp do_reduce(ref, pid, mref, {:suspend, acc}, fun) do
-      {:suspended, acc, &do_reduce(ref, pid, mref, &1, fun)}
+    defp do_reduce(ref, pid, mref, error_fn, {:suspend, acc}, fun) do
+      {:suspended, acc, &do_reduce(ref, pid, mref, error_fn, &1, fun)}
     end
 
-    defp do_reduce(ref, pid, mref, {:cont, acc}, fun) do
+    defp do_reduce(ref, pid, mref, error_fn, {:cont, acc}, fun) do
       receive do
-        {Agora.Stream, ^ref, %StreamEvent{type: :done} = event} ->
+        {Agora.Stream, ^ref, %{type: :done} = event} ->
           case fun.(event, acc) do
             {:halt, acc} -> {:halted, acc}
             {_, acc} -> {:done, acc}
           end
 
-        {Agora.Stream, ^ref, %StreamEvent{type: :error} = event} ->
+        {Agora.Stream, ^ref, %{type: :error} = event} ->
           case fun.(event, acc) do
             {:halt, acc} -> {:halted, acc}
             {_, acc} -> {:done, acc}
           end
 
-        {Agora.Stream, ^ref, %StreamEvent{} = event} ->
-          do_reduce(ref, pid, mref, fun.(event, acc), fun)
+        {Agora.Stream, ^ref, event} ->
+          do_reduce(ref, pid, mref, error_fn, fun.(event, acc), fun)
 
         {:DOWN, ^mref, :process, ^pid, reason} ->
           error = Error.new(:streaming_error, "Stream process crashed: #{inspect(reason)}")
-          error_event = StreamEvent.error(error)
+          error_event = make_error(error_fn, error)
 
           case fun.(error_event, acc) do
             {:halt, acc} -> {:halted, acc}
@@ -95,7 +115,7 @@ defmodule Agora.Stream do
       after
         @stream_timeout ->
           error = Error.new(:timeout, "Stream timed out after #{@stream_timeout}ms")
-          error_event = StreamEvent.error(error)
+          error_event = make_error(error_fn, error)
 
           case fun.(error_event, acc) do
             {:halt, acc} -> {:halted, acc}
@@ -103,5 +123,8 @@ defmodule Agora.Stream do
           end
       end
     end
+
+    defp make_error(nil, error), do: StreamEvent.error(error)
+    defp make_error(fun, error), do: fun.(error)
   end
 end
