@@ -47,6 +47,10 @@ defmodule Agora.Orchestrator.Handoff do
 
       HANDOFF:agent_name:message to pass to the next agent
 
+  The directive must appear at the very start of the response content (no leading
+  whitespace or prose). Use metadata handoff for responses that include other content
+  alongside the handoff instruction.
+
   """
 
   @behaviour Agora.Orchestrator
@@ -291,31 +295,15 @@ defmodule Agora.Orchestrator.Handoff do
         :no_metadata
 
       %{target: target} = handoff when is_binary(target) ->
-        case Map.fetch(agent_lookup, target) do
-          {:ok, agent_atom} ->
-            message = Map.get(handoff, :message, msg.content) || ""
-            {:handoff, agent_atom, message}
-
-          :error ->
-            {:error,
-             Error.new(
-               :orchestration_error,
-               "Unknown handoff target in metadata: #{inspect(target)}",
-               %{attempted_target: target, known_agents: Map.keys(agent_lookup)}
-             )}
+        with {:ok, agent_atom} <- resolve_metadata_target(target, agent_lookup, :string),
+             {:ok, message} <- validate_metadata_message(handoff, msg.content) do
+          {:handoff, agent_atom, message}
         end
 
       %{target: target} = handoff when is_atom(target) ->
-        if target in Map.values(agent_lookup) do
-          message = Map.get(handoff, :message, msg.content) || ""
-          {:handoff, target, message}
-        else
-          {:error,
-           Error.new(
-             :orchestration_error,
-             "Unknown handoff target in metadata: #{inspect(target)}",
-             %{attempted_target: target, known_agents: Map.values(agent_lookup)}
-           )}
+        with {:ok, agent_atom} <- resolve_metadata_target(target, agent_lookup, :atom),
+             {:ok, message} <- validate_metadata_message(handoff, msg.content) do
+          {:handoff, agent_atom, message}
         end
 
       %{} ->
@@ -334,12 +322,61 @@ defmodule Agora.Orchestrator.Handoff do
     end
   end
 
+  defp resolve_metadata_target(target, agent_lookup, :string) do
+    case Map.fetch(agent_lookup, target) do
+      {:ok, agent_atom} ->
+        {:ok, agent_atom}
+
+      :error ->
+        {:error,
+         Error.new(
+           :orchestration_error,
+           "Unknown handoff target in metadata: #{inspect(target)}",
+           %{attempted_target: target, known_agents: Map.keys(agent_lookup)}
+         )}
+    end
+  end
+
+  defp resolve_metadata_target(target, agent_lookup, :atom) do
+    if target in Map.values(agent_lookup) do
+      {:ok, target}
+    else
+      {:error,
+       Error.new(
+         :orchestration_error,
+         "Unknown handoff target in metadata: #{inspect(target)}",
+         %{attempted_target: target, known_agents: Map.values(agent_lookup)}
+       )}
+    end
+  end
+
+  defp validate_metadata_message(handoff, fallback_content) do
+    message = Map.get(handoff, :message, fallback_content)
+
+    case message do
+      nil -> {:ok, ""}
+      msg when is_binary(msg) -> {:ok, msg}
+      other ->
+        {:error,
+         Error.new(
+           :orchestration_error,
+           "Malformed handoff metadata: :message must be a string or nil, got: #{inspect(other)}"
+         )}
+    end
+  end
+
   defp parse_content(content, agent_lookup, nil) do
     default_parse(content, agent_lookup)
   end
 
   defp parse_content(content, agent_lookup, parse_fn) do
-    safe_parse(fn -> parse_fn.(content, agent_lookup) end)
+    case safe_parse(fn -> parse_fn.(content, agent_lookup) end) do
+      {:handoff, target, message} ->
+        validate_parsed_target(target, message, agent_lookup)
+
+      other ->
+        other
+    end
   end
 
   defp default_parse(content, agent_lookup) do
@@ -400,6 +437,19 @@ defmodule Agora.Orchestrator.Handoff do
      )}
   end
 
+  defp validate_parsed_target(target, message, agent_lookup) do
+    if target in Map.values(agent_lookup) do
+      {:handoff, target, message}
+    else
+      {:error,
+       Error.new(
+         :orchestration_error,
+         "Custom parse_handoff returned unknown target: #{inspect(target)}",
+         %{attempted_target: target, known_agents: Map.values(agent_lookup)}
+       )}
+    end
+  end
+
   defp format_crash(:error, %{__exception__: true} = exception),
     do: Exception.message(exception)
 
@@ -454,7 +504,18 @@ defmodule Agora.Orchestrator.Handoff do
 
   defp check_max_hops(_state), do: :ok
 
-  defp check_allowed_target(target, %{allowed_targets: nil}), do: check_target_exists(target)
+  defp check_allowed_target(target, %{allowed_targets: nil, agent_lookup: agent_lookup}) do
+    if target in Map.values(agent_lookup) do
+      :ok
+    else
+      {:error,
+       Error.new(
+         :orchestration_error,
+         "Unknown handoff target: #{inspect(target)}",
+         %{attempted_target: target, known_agents: Map.values(agent_lookup)}
+       )}
+    end
+  end
 
   defp check_allowed_target(target, %{allowed_targets: targets, current_agent: current}) do
     case Map.fetch(targets, current) do
@@ -479,9 +540,6 @@ defmodule Agora.Orchestrator.Handoff do
          )}
     end
   end
-
-  # When allowed_targets is nil, any known agent is valid (self-handoff checked separately)
-  defp check_target_exists(_target), do: :ok
 
   defp check_no_repeat_window(_target, %{no_repeat_window: nil}), do: :ok
 

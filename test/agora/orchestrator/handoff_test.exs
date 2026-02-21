@@ -359,6 +359,34 @@ defmodule Agora.Orchestrator.HandoffTest do
 
       assert err_msg =~ "Malformed handoff metadata"
     end
+
+    test "non-binary :message in metadata returns typed error" do
+      state = init!()
+
+      msg =
+        Message.new(:assistant, "routing",
+          metadata: %{handoff: %{target: "agent_b", message: 42}}
+        )
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Handoff.handle_result(state, :agent_a, {:ok, msg})
+
+      assert err_msg =~ ":message must be a string or nil"
+    end
+
+    test "non-binary :message with atom target returns typed error" do
+      state = init!()
+
+      msg =
+        Message.new(:assistant, "routing",
+          metadata: %{handoff: %{target: :agent_b, message: [:list, :data]}}
+        )
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Handoff.handle_result(state, :agent_a, {:ok, msg})
+
+      assert err_msg =~ ":message must be a string or nil"
+    end
   end
 
   describe "handle_result/3 — handoff via directive" do
@@ -633,6 +661,18 @@ defmodule Agora.Orchestrator.HandoffTest do
       {:done, result_msg, _state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert result_msg.content == "task complete"
+    end
+
+    test "custom parser returning unknown target returns orchestration_error" do
+      parse_fn = fn _content, _lookup -> {:handoff, :nonexistent_agent, "go"} end
+      state = init!(%{parse_handoff: parse_fn})
+      msg = assistant_msg("trigger unknown target")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Handoff.handle_result(state, :agent_a, {:ok, msg})
+
+      assert err_msg =~ "unknown target"
+      assert err_msg =~ "nonexistent_agent"
     end
 
     test "custom parser + directive content present + parser returns :no_handoff results in done (no fallback)" do
