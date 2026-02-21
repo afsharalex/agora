@@ -52,6 +52,27 @@ defmodule Agora.Workflow.EdgeTest do
       assert error.type == :workflow_error
       assert error.message =~ ":condition must be a 1-arity function"
     end
+
+    test "creates edge with optional: true" do
+      assert {:ok, edge} = Edge.new(from: :a, to: :b, optional: true)
+      assert edge.optional == true
+    end
+
+    test "creates edge with optional: false" do
+      assert {:ok, edge} = Edge.new(from: :a, to: :b, optional: false)
+      assert edge.optional == false
+    end
+
+    test "defaults optional to false" do
+      assert {:ok, edge} = Edge.new(from: :a, to: :b)
+      assert edge.optional == false
+    end
+
+    test "returns error when optional is not a boolean" do
+      assert {:error, error} = Edge.new(from: :a, to: :b, optional: "yes")
+      assert error.type == :workflow_error
+      assert error.message =~ ":optional must be a boolean"
+    end
   end
 
   describe "new!/1" do

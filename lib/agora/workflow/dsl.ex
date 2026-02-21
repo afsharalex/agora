@@ -300,6 +300,7 @@ defmodule Agora.Workflow.DSL do
       true ->
         opts
     end
+    |> validate_optional_opt(meta, caller)
   end
 
   defp normalize_edge_opts(opts, meta, caller) do
@@ -307,6 +308,18 @@ defmodule Agora.Workflow.DSL do
       line: Keyword.get(meta, :line, 0),
       file: caller.file,
       description: "edge options must be a keyword list, got: #{Macro.to_string(opts)}"
+  end
+
+  defp validate_optional_opt(opts, meta, caller) do
+    case Keyword.fetch(opts, :optional) do
+      :error -> opts
+      {:ok, val} when is_boolean(val) -> opts
+      {:ok, other} ->
+        raise CompileError,
+          line: Keyword.get(meta, :line, 0),
+          file: caller.file,
+          description: "edge :optional must be a boolean, got: #{inspect(other)}"
+    end
   end
 
   # --- ~> pipe helpers ---

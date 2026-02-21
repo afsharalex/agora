@@ -12,6 +12,9 @@ defmodule Agora.Workflow.Edge do
     * `:condition` — optional 1-arity function `(map() -> boolean())` that
       receives the current results map and returns whether this edge is active.
       When `nil`, the edge is unconditional.
+    * `:optional` — when `true`, a `:skipped` predecessor is downgraded to
+      `:not_required` instead of `:failed_dep`. Errors (`{:error, _}`) always
+      remain `:failed_dep` regardless of this flag. Default: `false`.
 
   """
 
@@ -20,11 +23,12 @@ defmodule Agora.Workflow.Edge do
   @type t :: %__MODULE__{
           from: atom(),
           to: atom(),
-          condition: (map() -> boolean()) | nil
+          condition: (map() -> boolean()) | nil,
+          optional: boolean()
         }
 
   @derive {Jason.Encoder, except: [:condition]}
-  defstruct [:from, :to, :condition]
+  defstruct [:from, :to, :condition, optional: false]
 
   @doc """
   Creates a new Edge struct with validation.
@@ -36,8 +40,9 @@ defmodule Agora.Workflow.Edge do
     with {:ok, from} <- validate_endpoint(opts[:from], :from),
          {:ok, to} <- validate_endpoint(opts[:to], :to),
          {:ok, condition} <- validate_condition(opts[:condition]),
+         {:ok, optional} <- validate_optional(opts[:optional]),
          :ok <- validate_no_self_loop(from, to) do
-      {:ok, %__MODULE__{from: from, to: to, condition: condition}}
+      {:ok, %__MODULE__{from: from, to: to, condition: condition, optional: optional}}
     end
   end
 
@@ -69,6 +74,16 @@ defmodule Agora.Workflow.Edge do
       Error.wrap(
         :workflow_error,
         "Edge :condition must be a 1-arity function, got: #{inspect(other)}"
+      )
+
+  defp validate_optional(nil), do: {:ok, false}
+  defp validate_optional(val) when is_boolean(val), do: {:ok, val}
+
+  defp validate_optional(other),
+    do:
+      Error.wrap(
+        :workflow_error,
+        "Edge :optional must be a boolean, got: #{inspect(other)}"
       )
 
   defp validate_no_self_loop(id, id),

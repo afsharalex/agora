@@ -394,6 +394,65 @@ defmodule Agora.Workflow.DSLTest do
       end
     end
 
+    test "optional edge" do
+      import Agora.Workflow.DSL
+
+      w =
+        workflow do
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+          edge(:a, :b, optional: true)
+        end
+
+      [e] = w.edges
+      assert e.optional == true
+    end
+
+    test "optional: false edge" do
+      import Agora.Workflow.DSL
+
+      w =
+        workflow do
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+          edge(:a, :b, optional: false)
+        end
+
+      [e] = w.edges
+      assert e.optional == false
+    end
+
+    test "optional edge with condition" do
+      import Agora.Workflow.DSL
+
+      cond_fn = fn _r -> true end
+
+      w =
+        workflow do
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+          edge(:a, :b, optional: true, condition: cond_fn)
+        end
+
+      [e] = w.edges
+      assert e.optional == true
+      assert e.condition == cond_fn
+    end
+
+    test "optional: non-boolean raises CompileError" do
+      assert_raise CompileError, ~r/edge :optional must be a boolean/, fn ->
+        Code.eval_string("""
+        import Agora.Workflow.DSL
+
+        workflow do
+          step :a, run: fn _ -> {:ok, 1} end
+          step :b, run: fn _ -> {:ok, 2} end
+          edge :a, :b, optional: "yes"
+        end
+        """)
+      end
+    end
+
     test "edge with non-keyword opts raises CompileError" do
       assert_raise CompileError, ~r/edge options must be a keyword list/, fn ->
         Code.eval_string("""

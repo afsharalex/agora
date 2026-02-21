@@ -485,6 +485,102 @@ defmodule Agora.Workflow.ExecutorTest do
     end
   end
 
+  describe "optional edges" do
+    test "optional edge with skipped predecessor allows merge step to run" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 10} end)
+        |> Builder.step(:b, fn _r -> {:ok, "should not run"} end)
+        |> Builder.step(:merge, fn r ->
+          {:ok, "a=#{elem(r[:a], 1)}, b=#{inspect(r[:b])}"}
+        end)
+        |> Builder.edge(:a, :b, condition: fn _r -> false end)
+        |> Builder.edge(:a, :merge)
+        |> Builder.edge(:b, :merge, optional: true)
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      assert results[:a] == {:ok, 10}
+      assert results[:b] == :skipped
+      # Merge runs because :b edge is optional and :b was skipped (not_required)
+      assert {:ok, merged} = results[:merge]
+      assert merged =~ "a=10"
+    end
+
+    test "optional edge with failed predecessor blocks merge step" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 10} end)
+        |> Builder.step(:b, fn _r -> Error.wrap(:workflow_error, "b failed") end)
+        |> Builder.step(:merge, fn _r -> {:ok, "should not run"} end)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:a, :merge)
+        |> Builder.edge(:b, :merge, optional: true)
+        |> Builder.build!()
+
+      # In skip mode: error stays as failed_dep even for optional edges
+      assert {:ok, results} = Executor.run(workflow, on_failure: :skip)
+      assert results[:a] == {:ok, 10}
+      assert {:error, %Error{}} = results[:b]
+      # Merge is blocked because b FAILED (not just skipped)
+      assert results[:merge] == :skipped
+    end
+
+    test "all optional branches skipped means merge is skipped" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.step(:b, fn _r -> {:ok, "never"} end)
+        |> Builder.step(:c, fn _r -> {:ok, "never"} end)
+        |> Builder.step(:merge, fn _r -> {:ok, "should not run"} end)
+        |> Builder.edge(:a, :b, condition: fn _r -> false end)
+        |> Builder.edge(:a, :c, condition: fn _r -> false end)
+        |> Builder.edge(:b, :merge, optional: true)
+        |> Builder.edge(:c, :merge, optional: true)
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      assert results[:b] == :skipped
+      assert results[:c] == :skipped
+      # All edges to merge are not_required, none are satisfied → merge skipped
+      assert results[:merge] == :skipped
+    end
+
+    test "mixed optional and required edges" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 10} end)
+        |> Builder.step(:b, fn _r -> {:ok, "skipped"} end)
+        |> Builder.step(:merge, fn r ->
+          {:ok, "a=#{elem(r[:a], 1)}"}
+        end)
+        |> Builder.edge(:a, :b, condition: fn _r -> false end)
+        |> Builder.edge(:a, :merge)
+        |> Builder.edge(:b, :merge, optional: true)
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      # Required edge from :a is satisfied, optional from :b is not_required
+      assert {:ok, "a=10"} = results[:merge]
+    end
+
+    test "default optional: false preserves backward compatibility" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.step(:b, fn _r -> {:ok, "never"} end)
+        |> Builder.step(:c, fn _r -> {:ok, "never"} end)
+        |> Builder.edge(:a, :b, condition: fn _r -> false end)
+        |> Builder.edge(:b, :c)
+        |> Builder.build!()
+
+      assert {:ok, results} = Executor.run(workflow)
+      assert results[:b] == :skipped
+      # Without optional: true, :b being skipped causes :c to be skipped (failed_dep)
+      assert results[:c] == :skipped
+    end
+  end
+
   describe "fan-in gating in skip mode" do
     test "fan-in step skips when one predecessor failed" do
       workflow =

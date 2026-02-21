@@ -279,7 +279,7 @@ defmodule Agora.Workflow.Executor do
         :failed_dep
 
       :skipped ->
-        :failed_dep
+        if edge.optional, do: :not_required, else: :failed_dep
     end
   end
 
