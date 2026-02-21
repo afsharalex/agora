@@ -278,6 +278,7 @@ defmodule Agora.Workflow.Definition do
       true ->
         opts
     end
+    |> validate_optional_opt(caller)
   end
 
   defp normalize_edge_opts(opts, caller) do
@@ -285,6 +286,22 @@ defmodule Agora.Workflow.Definition do
       line: caller.line,
       file: caller.file,
       description: "edge options must be a keyword list, got: #{Macro.to_string(opts)}"
+  end
+
+  defp validate_optional_opt(opts, caller) do
+    case Keyword.fetch(opts, :optional) do
+      :error ->
+        opts
+
+      {:ok, val} when is_boolean(val) ->
+        opts
+
+      {:ok, other} ->
+        raise CompileError,
+          line: caller.line,
+          file: caller.file,
+          description: "edge :optional must be a boolean, got: #{inspect(other)}"
+    end
   end
 
   # --- Chain macro ---

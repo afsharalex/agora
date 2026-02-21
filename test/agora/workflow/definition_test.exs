@@ -266,6 +266,49 @@ defmodule Agora.Workflow.DefinitionTest do
         end
       end
     end
+
+    test "optional: true edge" do
+      defmodule OptionalEdgeModule do
+        use Agora.Workflow.Definition
+
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
+
+        edge(:a, :b, optional: true)
+      end
+
+      w = OptionalEdgeModule.__workflow__()
+      [e] = w.edges
+      assert e.optional == true
+    end
+
+    test "optional: false edge" do
+      defmodule OptionalFalseEdgeModule do
+        use Agora.Workflow.Definition
+
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
+
+        edge(:a, :b, optional: false)
+      end
+
+      w = OptionalFalseEdgeModule.__workflow__()
+      [e] = w.edges
+      assert e.optional == false
+    end
+
+    test "non-boolean optional raises compile error" do
+      assert_raise CompileError, ~r/edge :optional must be a boolean/, fn ->
+        defmodule BadOptionalEdgeModule do
+          use Agora.Workflow.Definition
+
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+
+          edge(:a, :b, optional: "yes")
+        end
+      end
+    end
   end
 
   describe "chain macro" do

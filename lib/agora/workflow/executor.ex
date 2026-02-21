@@ -53,28 +53,30 @@ defmodule Agora.Workflow.Executor do
   """
   @spec run(Workflow.t(), keyword()) :: {:ok, %{atom() => step_result()}} | {:error, Error.t()}
   def run(%Workflow{} = workflow, opts \\ []) do
-    workflow_id = System.unique_integer([:positive])
-    step_count = map_size(workflow.steps)
-    telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
+    with :ok <- validate_cross_cutting_opts(opts) do
+      workflow_id = System.unique_integer([:positive])
+      step_count = map_size(workflow.steps)
+      telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
 
-    Agora.Telemetry.span(
-      [:agora, :workflow, :run],
-      Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count}),
-      fn ->
-        result = do_run(workflow, opts)
+      Agora.Telemetry.span(
+        [:agora, :workflow, :run],
+        Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count}),
+        fn ->
+          result = do_run(workflow, opts)
 
-        stop_meta =
-          Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count})
+          stop_meta =
+            Map.merge(telemetry_metadata, %{workflow_id: workflow_id, step_count: step_count})
 
-        stop_meta =
-          case result do
-            {:error, error} -> Map.put(stop_meta, :error, error)
-            _ -> stop_meta
-          end
+          stop_meta =
+            case result do
+              {:error, error} -> Map.put(stop_meta, :error, error)
+              _ -> stop_meta
+            end
 
-        {result, stop_meta}
-      end
-    )
+          {result, stop_meta}
+        end
+      )
+    end
   end
 
   defp do_run(workflow, opts) do
@@ -519,5 +521,36 @@ defmodule Agora.Workflow.Executor do
 
         {results, checkpoint, error}
     end)
+  end
+
+  # --- Option validation ---
+
+  defp validate_cross_cutting_opts(opts) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+    context_policy = Keyword.get(opts, :context_policy)
+    telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
+
+    cond do
+      cancel_token != nil and not match?(%CancelToken{}, cancel_token) ->
+        Error.wrap(
+          :config_error,
+          ":cancel_token must be a %CancelToken{} struct, got: #{inspect(cancel_token)}"
+        )
+
+      context_policy != nil and not match?(%ContextPolicy{}, context_policy) ->
+        Error.wrap(
+          :config_error,
+          ":context_policy must be a %ContextPolicy{} struct, got: #{inspect(context_policy)}"
+        )
+
+      not is_map(telemetry_metadata) ->
+        Error.wrap(
+          :config_error,
+          ":telemetry_metadata must be a map, got: #{inspect(telemetry_metadata)}"
+        )
+
+      true ->
+        :ok
+    end
   end
 end

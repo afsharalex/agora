@@ -306,4 +306,48 @@ defmodule Agora.Workflow.ExecutorCrossCuttingTest do
       assert Map.has_key?(metadata, :step_count)
     end
   end
+
+  describe "cross-cutting option validation" do
+    setup do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      %{workflow: workflow}
+    end
+
+    test "invalid cancel_token returns config_error", %{workflow: workflow} do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Executor.run(workflow, cancel_token: :bad)
+
+      assert msg =~ ":cancel_token must be a %CancelToken{}"
+    end
+
+    test "invalid context_policy returns config_error", %{workflow: workflow} do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Executor.run(workflow, context_policy: "not a policy")
+
+      assert msg =~ ":context_policy must be a %ContextPolicy{}"
+    end
+
+    test "non-map telemetry_metadata returns config_error", %{workflow: workflow} do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Executor.run(workflow, telemetry_metadata: :bad)
+
+      assert msg =~ ":telemetry_metadata must be a map"
+    end
+
+    test "valid options pass validation", %{workflow: workflow} do
+      token = CancelToken.new()
+      policy = ContextPolicy.new!(strategy: :none)
+
+      assert {:ok, _} =
+               Executor.run(workflow,
+                 cancel_token: token,
+                 context_policy: policy,
+                 telemetry_metadata: %{trace: "ok"}
+               )
+    end
+  end
 end

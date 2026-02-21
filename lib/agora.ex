@@ -168,8 +168,12 @@ defmodule Agora do
   For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`):
   input is `String.t() | Message.t()`, `:agents` option required.
 
-  For workflow modes (`:dag`):
-  input is `Workflow.t() | module()`, workflow data passed via `:input` option.
+  For workflow modes:
+
+    * `:dag` — input is `Workflow.t()` or module, workflow data via `:input` option
+    * `:sequential` — input is `[step_spec()]`, a list of step tuples
+    * `:conditional` — input is `{router_spec, [branch_spec()]}`, with optional `:merge`
+    * `:parallel` — input is `[step_spec()]`, with optional `:from`/`:to` source/sink steps
 
   ## Examples
 
@@ -179,8 +183,10 @@ defmodule Agora do
         termination: TerminationCondition.max_turns(5)
       )
 
-      # Workflow mode
+      # Workflow modes
       {:ok, results} = Agora.run_mode(:dag, workflow, input: data)
+      {:ok, results} = Agora.run_mode(:sequential, [{:a, &step_a/1}, {:b, &step_b/1}])
+      {:ok, results} = Agora.run_mode(:parallel, branches, from: {:src, &source/1})
 
   """
   @spec run_mode(atom(), term(), keyword()) ::
@@ -251,5 +257,13 @@ defmodule Agora do
            "Module #{inspect(module)} could not be loaded: #{inspect(reason)}"
          )}
     end
+  end
+
+  def run_workflow(other, _opts) do
+    {:error,
+     Error.new(
+       :config_error,
+       "run_workflow expects a %Workflow{} struct or a module atom, got: #{inspect(other)}"
+     )}
   end
 end

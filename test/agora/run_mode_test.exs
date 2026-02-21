@@ -114,4 +114,36 @@ defmodule Agora.RunModeTest do
                Agora.run_mode(:nonexistent, "hello", agents: %{})
     end
   end
+
+  describe "run_workflow/2 input validation" do
+    test "string input returns config_error" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Agora.run_workflow("bad input")
+
+      assert msg =~ "run_workflow expects a %Workflow{} struct or a module atom"
+    end
+
+    test "integer input returns config_error" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Agora.run_workflow(42)
+
+      assert msg =~ "run_workflow expects a %Workflow{} struct or a module atom"
+    end
+
+    test "list input returns config_error" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Agora.run_workflow([1, 2, 3])
+
+      assert msg =~ "run_workflow expects a %Workflow{} struct or a module atom"
+    end
+  end
+
+  describe "run_mode(:dag, ...) input validation" do
+    test "bad input to :dag returns config_error" do
+      assert {:error, %Error{type: :config_error, message: msg}} =
+               Agora.run_mode(:dag, "bad")
+
+      assert msg =~ "run_workflow expects a %Workflow{} struct or a module atom"
+    end
+  end
 end
