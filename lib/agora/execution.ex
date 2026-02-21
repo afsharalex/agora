@@ -4,7 +4,7 @@ defmodule Agora.Execution do
 
   Provides two entry points:
 
-    * `run/3` — for orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`)
+    * `run/3` — for orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`)
     * `run_workflow/3` — for workflow modes (`:dag`, `:sequential`, `:conditional`, `:parallel`)
 
   This module handles mode resolution, option validation, and lifecycle management
@@ -18,6 +18,7 @@ defmodule Agora.Execution do
   | `:round_robin` | `Agora.Orchestrator.RoundRobin` | Cycle through agents |
   | `:group_chat` | `Agora.Orchestrator.GroupChat` | Shared transcript |
   | `:supervisor` | `Agora.Orchestrator.Supervisor` | Delegation pattern |
+  | `:plan` | `Agora.Orchestrator.Plan` | Autonomous plan-execute-review |
 
   ## Workflow Modes
 
@@ -56,7 +57,8 @@ defmodule Agora.Execution do
     single: Agora.Orchestrator.Single,
     round_robin: Agora.Orchestrator.RoundRobin,
     group_chat: Agora.Orchestrator.GroupChat,
-    supervisor: Agora.Orchestrator.Supervisor
+    supervisor: Agora.Orchestrator.Supervisor,
+    plan: Agora.Orchestrator.Plan
   }
 
   @workflow_modes [:dag, :sequential, :conditional, :parallel]

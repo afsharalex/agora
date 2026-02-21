@@ -16,6 +16,7 @@ LLM-driven coordination patterns where agents take turns based on an orchestrato
 | `:round_robin` | `Agora.Orchestrator.RoundRobin` | Cycle through agents |
 | `:group_chat` | `Agora.Orchestrator.GroupChat` | Shared transcript discussion |
 | `:supervisor` | `Agora.Orchestrator.Supervisor` | Delegation to workers |
+| `:plan` | `Agora.Orchestrator.Plan` | Autonomous plan-execute-review |
 
 ### Workflow Modes
 
@@ -170,6 +171,82 @@ workflow = Builder.new()
 {:ok, results} = Agora.run_mode(:dag, workflow, input: data)
 ```
 
+## Plan Mode
+
+Plan Mode provides autonomous project-manager orchestration. A designated planner agent creates a structured plan, assigns steps to specialist workers, and reviews results with retry/reassign/replan capability.
+
+### Basic Usage
+
+```elixir
+{:ok, response} = Agora.run_mode(:plan, "Research and write about BEAM concurrency",
+  agents: %{
+    planner: planner_config,
+    researcher: researcher_config,
+    writer: writer_config
+  },
+  orchestrator_opts: [planner_agent: :planner]
+)
+```
+
+### How It Works
+
+1. **Planning** — The planner agent receives the task and outputs a structured plan with `PLAN`/`END_PLAN` markers
+2. **Executing** — Steps execute in dependency order, each worker receiving focused context
+3. **Reviewing** — After each step, the planner reviews and decides: CONTINUE, RETRY, REASSIGN, REPLAN, or COMPLETE
+
+### Plan Format
+
+The planner outputs steps between markers. Dependencies are declared with `:DEP:id`:
+
+```
+PLAN
+STEP:1:researcher:Research the topic
+STEP:2:writer:Write the draft:DEP:1
+STEP:3:reviewer:Review and edit:DEP:2
+END_PLAN
+```
+
+### Review Format
+
+After each step execution, the planner reviews with one directive:
+
+```
+REVIEW:COMPLETE:summary text
+REVIEW:CONTINUE:reason to proceed
+REVIEW:RETRY:reason to retry failed step
+REVIEW:REASSIGN:worker_name:reason to reassign
+REVIEW:REPLAN:reason to create new plan
+```
+
+### Options
+
+Pass these via `:orchestrator_opts`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:planner_agent` | required | Atom name of the planner agent |
+| `:max_retries_per_step` | `2` | Per-step retry limit |
+| `:max_replans` | `2` | How many times the planner can replan |
+| `:max_plan_steps` | `10` | Maximum steps in a single plan |
+| `:parse_plan` | `nil` | Custom 2-arity plan parser function |
+| `:parse_review` | `nil` | Custom 1-arity review parser function |
+
+### Custom Parsers
+
+Override the default parsing with custom functions:
+
+```elixir
+custom_plan_parser = fn content, agent_lookup ->
+  # Parse your custom format, return {:ok, [step]} or {:error, Error.t()}
+  {:ok, [%{id: 1, description: "task", assignee: :worker, deps: []}]}
+end
+
+orchestrator_opts: [
+  planner_agent: :planner,
+  parse_plan: custom_plan_parser
+]
+```
+
 ### Mode Selection Guide
 
 | Use Case | Mode |
@@ -179,6 +256,7 @@ workflow = Builder.new()
 | Input-dependent routing | `:conditional` |
 | Complex DAG with mixed topologies | `:dag` |
 | LLM-driven multi-agent coordination | Orchestrator modes |
+| Autonomous plan-execute-review cycle | `:plan` |
 
 ## Cancellation
 

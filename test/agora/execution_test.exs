@@ -54,6 +54,50 @@ defmodule Agora.ExecutionTest do
         )
     end
 
+    test "dispatches :plan to Plan orchestrator" do
+      counter = :counters.new(1, [:atomics])
+
+      planner_fn = fn _messages, _config ->
+        n = :counters.get(counter, 1) + 1
+        :counters.put(counter, 1, n)
+
+        case n do
+          1 ->
+            {:ok,
+             Message.assistant(
+               "PLAN\nSTEP:1:worker:Do the task\nEND_PLAN"
+             )}
+
+          _ ->
+            {:ok, Message.assistant("REVIEW:COMPLETE:Task done")}
+        end
+      end
+
+      worker_fn = fn _messages, _config ->
+        {:ok, Message.assistant("Worker completed")}
+      end
+
+      planner_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [echo_mode: :function, echo_function: planner_fn]
+        )
+
+      worker_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [echo_mode: :function, echo_function: worker_fn]
+        )
+
+      {:ok, %Message{content: "Task done"}} =
+        Execution.run(:plan, "Do something",
+          agents: %{planner: planner_config, worker: worker_config},
+          orchestrator_opts: [planner_agent: :planner]
+        )
+    end
+
     test "returns config_error for unknown mode" do
       config = AgentConfig.new!(provider: :echo, model: "echo")
 
@@ -191,6 +235,7 @@ defmodule Agora.ExecutionTest do
       assert Map.has_key?(modes, :round_robin)
       assert Map.has_key?(modes, :group_chat)
       assert Map.has_key?(modes, :supervisor)
+      assert Map.has_key?(modes, :plan)
     end
   end
 
