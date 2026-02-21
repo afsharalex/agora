@@ -240,6 +240,111 @@ Resume workflows from where they left off:
 
 When a checkpoint store is provided, completed steps are loaded from the store and skipped. New step results are saved as they complete.
 
+## Block DSL
+
+For inline workflow definitions, the `Agora.Workflow.DSL` module provides a `workflow do ... end` macro that eliminates pipe-threading ceremony:
+
+```elixir
+import Agora.Workflow.DSL
+
+w = workflow do
+  step :fetch do
+    {:ok, MyApp.API.get_users()}
+  end
+
+  step :transform, after: :fetch do
+    {:ok, users} = results[:fetch]
+    {:ok, Enum.map(users, &normalize/1)}
+  end
+
+  step :count, after: :fetch, run: &count/1
+
+  step :summary, run: fn r ->
+    {:ok, count} = r[:count]
+    {:ok, transformed} = r[:transform]
+    {:ok, %{count: count, data: transformed}}
+  end
+
+  [:count, :transform] ~> :summary
+end
+
+{:ok, results} = Agora.run_workflow(w)
+```
+
+### Step Forms
+
+Steps can use a `do` block (with an injected `results` binding) or a `run:` keyword:
+
+```elixir
+# do block — results binding available
+step :transform, after: :fetch do
+  {:ok, data} = results[:fetch]
+  {:ok, process(data)}
+end
+
+# run: keyword — function reference
+step :transform, after: :fetch, run: &process/1
+```
+
+### Workflow Options
+
+Options passed to `workflow` become `step_defaults`:
+
+```elixir
+w = workflow timeout: 30_000, retry: 2 do
+  step :a, run: &fetch/1
+  step :b, run: &transform/1
+end
+```
+
+### Edge Wiring with `~>`
+
+The `~>` operator provides visual DAG wiring:
+
+```elixir
+workflow do
+  step :a, run: &a/1
+  step :b, run: &b/1
+  step :c, run: &c/1
+  step :d, run: &d/1
+
+  :a ~> :b ~> :c           # chain
+  [:b, :c] ~> :d           # fan-in
+  :a ~> [:b, :c]           # fan-out
+end
+```
+
+### Explicit Edges and Conditions
+
+```elixir
+workflow do
+  step :check, run: &check/1
+  step :notify, run: &notify/1
+
+  edge :check, :notify, condition: fn r ->
+    r[:check] == {:ok, :critical}
+  end
+end
+```
+
+The `when:` alias works for edge conditions too: `edge :a, :b, when: fn r -> ... end`.
+
+### Topology Helpers
+
+```elixir
+workflow do
+  step :a, run: &a/1
+  step :b, run: &b/1
+  step :c, run: &c/1
+  step :d, run: &d/1
+
+  chain [:a, :b, :c]                    # linear edges (wire-only)
+  parallel [:b, :c], from: :a, to: :d   # fan-out/fan-in
+end
+```
+
+Note: the DSL `chain` maps to `Builder.sequence/2` (wire-only for pre-defined steps), not `Builder.chain/2` (which defines steps and wires them).
+
 ## Builder API Reference
 
 | Function | Description |

@@ -159,14 +159,14 @@ end
 
 ### 9. `Agora.Workflow.DSL` module scaffolding
 
-- [ ] **9.1** Create `lib/agora/workflow/dsl.ex` with `defmodule Agora.Workflow.DSL`
-- [ ] **9.2** Implement `workflow/1` macro that accepts a `do` block
-- [ ] **9.3** Block body parsing — collect `step`, `edge`, `chain`, `parallel`, and `~>` AST nodes from the block
-- [ ] **9.4** Emit Builder pipeline: `Builder.new(opts) |> Builder.step(...) |> ... |> Builder.build!()`
-- [ ] **9.5** Support workflow-level options: `workflow timeout: 30_000, retry: 1 do ... end` → `Builder.new(step_defaults: [...])`
-- [ ] **9.6** Tests: basic `workflow do ... end` returns `%Workflow{}`
-- [ ] **9.7** Tests: workflow-level options passed as `step_defaults`
-- [ ] **9.8** Create `test/agora/workflow/dsl_test.exs` test file
+- [x] **9.1** Create `lib/agora/workflow/dsl.ex` with `defmodule Agora.Workflow.DSL`
+- [x] **9.2** Implement `workflow/1` macro that accepts a `do` block
+- [x] **9.3** Block body parsing — collect `step`, `edge`, `chain`, `parallel`, and `~>` AST nodes from the block
+- [x] **9.4** Emit Builder pipeline: `Builder.new(opts) |> Builder.step(...) |> ... |> Builder.build!()`
+- [x] **9.5** Support workflow-level options: `workflow timeout: 30_000, retry: 1 do ... end` → `Builder.new(step_defaults: [...])`
+- [x] **9.6** Tests: basic `workflow do ... end` returns `%Workflow{}`
+- [x] **9.7** Tests: workflow-level options passed as `step_defaults`
+- [x] **9.8** Create `test/agora/workflow/dsl_test.exs` test file
 
 ### 10. `step` macro — `do` block form
 
@@ -183,13 +183,13 @@ end
 Builder.step(builder, :transform, fn results -> ... end, inputs: [:fetch])
 ```
 
-- [ ] **10.1** Implement `step` macro with `do` block — wrap body in `fn results -> body end`
-- [ ] **10.2** Detect whether `results` is used in body; inject `_results` if unused (suppress compiler warning)
-- [ ] **10.3** Support all Phase 1 step options in the macro: `after:`, `condition:`/`when:`, `timeout:`, `retry:`
-- [ ] **10.4** Tests: `do` block step with `results` access
-- [ ] **10.5** Tests: `do` block step without `results` access (no compiler warning)
-- [ ] **10.6** Tests: step options (`after:`, `timeout:`, `retry:`) work in macro form
-- [ ] **10.7** Tests: `condition:`/`when:` work in macro form
+- [x] **10.1** Implement `step` macro with `do` block — wrap body in `fn results -> body end`
+- [x] **10.2** Detect whether `results` is used in body; inject `_results` if unused (suppress compiler warning)
+- [x] **10.3** Support all Phase 1 step options in the macro: `after:`, `condition:`/`when:`, `timeout:`, `retry:`
+- [x] **10.4** Tests: `do` block step with `results` access
+- [x] **10.5** Tests: `do` block step without `results` access (no compiler warning)
+- [x] **10.6** Tests: step options (`after:`, `timeout:`, `retry:`) work in macro form
+- [x] **10.7** Tests: `condition:`/`when:` work in macro form
 
 ### 11. `step` macro — `run:` keyword form
 
@@ -199,13 +199,13 @@ For function references where a `do` block is unnecessary.
 step :store, after: :transform, retry: 2, run: &MyApp.DB.store/1
 ```
 
-- [ ] **11.1** Implement `step` macro with `run:` keyword — extract handler from opts
-- [ ] **11.2** Validate `run:` and `do` block are mutually exclusive → compile error
-- [ ] **11.3** Validate `run:` is present or `do` block is present → compile error if neither
-- [ ] **11.4** Tests: `run:` with function capture
-- [ ] **11.5** Tests: `run:` with anonymous function
-- [ ] **11.6** Tests: `run:` + `do` block together → error
-- [ ] **11.7** Tests: neither `run:` nor `do` block → error
+- [x] **11.1** Implement `step` macro with `run:` keyword — extract handler from opts
+- [x] **11.2** Validate `run:` and `do` block are mutually exclusive → compile error
+- [x] **11.3** Validate `run:` is present or `do` block is present → compile error if neither
+- [x] **11.4** Tests: `run:` with function capture
+- [x] **11.5** Tests: `run:` with anonymous function
+- [x] **11.6** Tests: `run:` + `do` block together → error
+- [x] **11.7** Tests: neither `run:` nor `do` block → error
 
 ### 12. `edge` macro
 
@@ -217,11 +217,11 @@ edge :analyze, :notify, condition: fn r ->
 end
 ```
 
-- [ ] **12.1** Implement `edge` macro — expands to `Builder.edge/4`
-- [ ] **12.2** Support `condition:` and `when:` alias (same semantics as Builder)
-- [ ] **12.3** Tests: unconditional edge
-- [ ] **12.4** Tests: conditional edge with `condition:`
-- [ ] **12.5** Tests: conditional edge with `when:` alias
+- [x] **12.1** Implement `edge` macro — expands to `Builder.edge/4`
+- [x] **12.2** Support `condition:` and `when:` alias (same semantics as Builder)
+- [x] **12.3** Tests: unconditional edge
+- [x] **12.4** Tests: conditional edge with `condition:`
+- [x] **12.5** Tests: conditional edge with `when:` alias
 
 ### 13. `chain` and `parallel` macros
 
@@ -241,12 +241,12 @@ workflow do
 end
 ```
 
-- [ ] **13.1** Implement `chain` macro — expands to `Builder.sequence/2` (edge-only wiring, steps already defined above)
-- [ ] **13.2** Implement `parallel` macro — expands to `Builder.parallel/3`
-- [ ] **13.3** Tests: `chain` generates linear edges between pre-defined steps
-- [ ] **13.4** Tests: `parallel` generates fan-out/fan-in edges
-- [ ] **13.5** Documentation: note that macro `chain` maps to `Builder.sequence/2` (wire-only) not `Builder.chain/2` (define+wire)
-- [ ] **13.5** Tests: `chain` + `parallel` combined in one workflow
+- [x] **13.1** Implement `chain` macro — expands to `Builder.sequence/2` (edge-only wiring, steps already defined above)
+- [x] **13.2** Implement `parallel` macro — expands to `Builder.parallel/3`
+- [x] **13.3** Tests: `chain` generates linear edges between pre-defined steps
+- [x] **13.4** Tests: `parallel` generates fan-out/fan-in edges
+- [x] **13.5** Documentation: note that macro `chain` maps to `Builder.sequence/2` (wire-only) not `Builder.chain/2` (define+wire)
+- [x] **13.6** Tests: `chain` + `parallel` combined in one workflow
 
 ### 14. `~>` edge operator
 
@@ -274,46 +274,46 @@ Interpretation rules:
 | `[:a, :b] ~> :c` | `edge(:a, :c)` + `edge(:b, :c)` | Fan-in |
 | `:a ~> [:b, :c]` | `edge(:a, :b)` + `edge(:a, :c)` | Fan-out |
 
-- [ ] **14.1** Implement `~>` AST recognition in `workflow` macro — match `{:~>, _, [left, right]}` nodes
-- [ ] **14.2** Handle single edge: `:a ~> :b` → `Builder.edge(b, :a, :b)`
-- [ ] **14.3** Handle chained edges: `:a ~> :b ~> :c` → nested `{:~>, _, [{:~>, _, [:a, :b]}, :c]}` AST, flatten recursively
-- [ ] **14.4** Handle fan-in: `[:a, :b] ~> :c` → `Builder.edge` for each source
-- [ ] **14.5** Handle fan-out: `:a ~> [:b, :c]` → `Builder.edge` for each target
-- [ ] **14.6** Handle mixed: `[:a, :b] ~> [:c, :d]` → validation error (cross-product is surprising; use explicit `edge/3` calls or separate `~>` expressions instead)
-- [ ] **14.7** Validate operands are atoms or lists of atoms → clear error for invalid types
-- [ ] **14.8** `~>` edges go through `add_edge/2` duplicate detection (same as all other edges)
-- [ ] **14.9** Tests: single edge `:a ~> :b`
-- [ ] **14.10** Tests: chained `:a ~> :b ~> :c` generates two edges
-- [ ] **14.11** Tests: fan-in `[:a, :b] ~> :c`
-- [ ] **14.12** Tests: fan-out `:a ~> [:b, :c]`
-- [ ] **14.13** Tests: `~>` combined with `after:` on steps — both produce edges, no conflicts
-- [ ] **14.14** Tests: `~>` duplicate edge detection
-- [ ] **14.15** Tests: mixed lists `[:a, :b] ~> [:c, :d]` → validation error
-- [ ] **14.16** Tests: invalid operand types → error
+- [x] **14.1** Implement `~>` AST recognition in `workflow` macro — match `{:~>, _, [left, right]}` nodes
+- [x] **14.2** Handle single edge: `:a ~> :b` → `Builder.edge(b, :a, :b)`
+- [x] **14.3** Handle chained edges: `:a ~> :b ~> :c` → nested `{:~>, _, [{:~>, _, [:a, :b]}, :c]}` AST, flatten recursively
+- [x] **14.4** Handle fan-in: `[:a, :b] ~> :c` → `Builder.edge` for each source
+- [x] **14.5** Handle fan-out: `:a ~> [:b, :c]` → `Builder.edge` for each target
+- [x] **14.6** Handle mixed: `[:a, :b] ~> [:c, :d]` → validation error (cross-product is surprising; use explicit `edge/3` calls or separate `~>` expressions instead)
+- [x] **14.7** Validate operands are atoms or lists of atoms → clear error for invalid types
+- [x] **14.8** `~>` edges go through `add_edge/2` duplicate detection (same as all other edges)
+- [x] **14.9** Tests: single edge `:a ~> :b`
+- [x] **14.10** Tests: chained `:a ~> :b ~> :c` generates two edges
+- [x] **14.11** Tests: fan-in `[:a, :b] ~> :c`
+- [x] **14.12** Tests: fan-out `:a ~> [:b, :c]`
+- [x] **14.13** Tests: `~>` combined with `after:` on steps — both produce edges, no conflicts
+- [x] **14.14** Tests: `~>` duplicate edge detection
+- [x] **14.15** Tests: mixed lists `[:a, :b] ~> [:c, :d]` → validation error
+- [x] **14.16** Tests: invalid operand types → error
 
 ### 15. Error reporting and compile-time diagnostics
 
 Macro-generated code should produce clear error messages traceable to the user's source.
 
-- [ ] **15.1** Preserve source line numbers in macro expansion (use `Macro.escape/2` with `line:`)
-- [ ] **15.2** Builder errors at `build!/1` reference meaningful locations (not macro internals)
-- [ ] **15.3** Invalid macro usage (e.g., `step` outside `workflow` block) → clear compile error
-- [ ] **15.4** Tests: error messages include useful context (step ID, option name)
-- [ ] **15.5** Tests: `step` outside `workflow` block → compile error
+- [x] **15.1** Preserve source line numbers in macro expansion (AST meta `:line` threaded through `quote`/`unquote`; `CompileError` raises use `caller.file` + `meta[:line]`)
+- [x] **15.2** Builder errors at `build!/1` reference meaningful locations (not macro internals)
+- [x] **15.3** Invalid macro usage (e.g., `step` outside `workflow` block) → clear compile error
+- [x] **15.4** Tests: error messages include useful context (step ID, option name)
+- [x] **15.5** Tests: `step` outside `workflow` block → compile error
 
 ### 16. Phase 2 integration and documentation
 
-- [ ] **16.1** Integration test: full workflow with mixed `do` block + `run:` steps, edges, `~>` wiring, conditions
-- [ ] **16.2** Integration test: DSL workflow executed by `Agora.run_workflow/2`
-- [ ] **16.3** Integration test: DSL workflow with `AgentConfig` step handler via `run:`
-- [ ] **16.4** Integration test: workflow using both `after:` and `~>` for edges
-- [ ] **16.5** Add `@moduledoc` and `@doc` to `Agora.Workflow.DSL`
-- [ ] **16.6** Add DSL section to `guides/workflows.md` (including `~>` operator usage)
-- [ ] **16.7** Add `examples/workflow_dsl.exs` example script
-- [ ] **16.8** Add `Agora.Workflow.DSL` to `groups_for_modules` in `mix.exs`
-- [ ] **16.9** Verify `mix compile --warnings-as-errors`
-- [ ] **16.10** Verify `mix test` — all tests pass
-- [ ] **16.11** Verify `mix docs` builds cleanly
+- [x] **16.1** Integration test: full workflow with mixed `do` block + `run:` steps, edges, `~>` wiring, conditions
+- [x] **16.2** Integration test: DSL workflow executed by `Agora.run_workflow/2`
+- [x] **16.3** Integration test: DSL workflow with `AgentConfig` step handler via `run:`
+- [x] **16.4** Integration test: workflow using both `after:` and `~>` for edges
+- [x] **16.5** Add `@moduledoc` and `@doc` to `Agora.Workflow.DSL`
+- [x] **16.6** Add DSL section to `guides/workflows.md` (including `~>` operator usage)
+- [x] **16.7** Add `examples/workflow_dsl.exs` example script
+- [x] **16.8** Add `Agora.Workflow.DSL` to `groups_for_modules` in `mix.exs`
+- [x] **16.9** Verify `mix compile --warnings-as-errors`
+- [x] **16.10** Verify `mix test` — all tests pass
+- [x] **16.11** Verify `mix docs` builds cleanly
 
 ---
 
