@@ -71,6 +71,8 @@ defmodule Agora.Orchestrator do
               {:ok, Message.t()} | {:error, Error.t()}
             ) ::
               {:continue, new_state :: term()}
+              | {:continue, new_state :: term(), events :: [map()]}
               | {:done, Message.t(), new_state :: term()}
+              | {:done, Message.t(), new_state :: term(), events :: [map()]}
               | {:error, Error.t(), new_state :: term()}
 end

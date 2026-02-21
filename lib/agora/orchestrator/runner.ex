@@ -22,6 +22,13 @@ defmodule Agora.Orchestrator.Runner do
   Each `run/2` call re-initializes the orchestrator state and clears history.
   Agent processes persist across runs — they keep their conversation history.
 
+  ## ModeEvent Emission
+
+  The Runner emits `ModeEvent`s at orchestration boundaries via a pluggable
+  `emit_fn` field in state. When `nil` (sync `run/2` path), only telemetry
+  is emitted. When set (streaming `stream_run/2` path), events are relayed
+  to the caller AND telemetry is emitted.
+
   ## Example
 
       agents = %{
@@ -39,7 +46,7 @@ defmodule Agora.Orchestrator.Runner do
 
   use GenServer
 
-  alias Agora.{Agent, CancelToken, Error, Message}
+  alias Agora.{Agent, CancelToken, Error, Message, ModeEvent}
 
   @default_max_turns 100
 
@@ -78,11 +85,8 @@ defmodule Agora.Orchestrator.Runner do
 
   @doc """
   Returns the current runner status.
-
-  Note: like `Agent.get_status/1`, this always returns `:idle` due to
-  synchronous call serialization (calls queue behind any active run).
   """
-  @spec get_status(GenServer.server()) :: :idle | :running
+  @spec get_status(GenServer.server()) :: :idle | :running | :streaming
   def get_status(runner) do
     GenServer.call(runner, :get_status)
   end
@@ -244,7 +248,9 @@ defmodule Agora.Orchestrator.Runner do
                runner_name: runner_name,
                cancel_token: cancel_token,
                context_policy: context_policy,
-               telemetry_metadata: telemetry_metadata
+               telemetry_metadata: telemetry_metadata,
+               emit_fn: nil,
+               stream_info: nil
              }}
 
           {:error, error} ->
@@ -258,8 +264,8 @@ defmodule Agora.Orchestrator.Runner do
   end
 
   @impl true
-  def handle_call({:run, %Message{} = input}, _from, state) do
-    state = %{state | status: :running}
+  def handle_call({:run, %Message{} = input}, _from, %{status: :idle} = state) do
+    state = %{state | status: :running, emit_fn: nil}
     telemetry_meta = telemetry_metadata(state)
 
     :telemetry.execute(
@@ -277,6 +283,7 @@ defmodule Agora.Orchestrator.Runner do
       case safe_orchestrator_init(state.orchestrator, orch_config) do
         {:ok, orch_state} ->
           state = %{state | orchestrator_state: orch_state, history: []}
+          emit_mode_event(state, :mode_started, input)
           safe_orchestration_loop(input, state)
 
         {:error, error} ->
@@ -284,24 +291,42 @@ defmodule Agora.Orchestrator.Runner do
       end
 
     duration = System.monotonic_time() - start_time
+    turns = length(state.history)
+
+    # Emit terminal mode event (mode_cancelled already emitted in loop)
+    case result do
+      {:ok, _} ->
+        emit_mode_event(state, :mode_completed, %{turns: turns})
+
+      {:error, %Error{type: :cancelled}} ->
+        :ok
+
+      {:error, error} ->
+        emit_mode_event(state, :mode_failed, %{error: error, turns: turns})
+    end
+
     state = %{state | status: :idle}
 
     run_stop_meta =
       case result do
         {:ok, _} ->
-          Map.put(telemetry_meta, :steps, length(state.history))
+          Map.put(telemetry_meta, :steps, turns)
 
         {:error, error} ->
-          telemetry_meta |> Map.put(:steps, length(state.history)) |> Map.put(:error, error)
+          telemetry_meta |> Map.put(:steps, turns) |> Map.put(:error, error)
       end
 
     :telemetry.execute(
       [:agora, :orchestrator, :run, :stop],
-      %{duration: duration, steps: length(state.history)},
+      %{duration: duration, steps: turns},
       run_stop_meta
     )
 
     {:reply, result, state}
+  end
+
+  def handle_call({:run, _}, _from, %{status: status} = state) do
+    {:reply, Error.wrap(:config_error, "Runner is busy (status: #{status})"), state}
   end
 
   def handle_call(:get_history, _from, state) do
@@ -360,6 +385,7 @@ defmodule Agora.Orchestrator.Runner do
 
     # Check cancellation before anything else
     if cancel_token && CancelToken.cancelled?(cancel_token) do
+      emit_mode_event(state, :mode_cancelled, %{boundary: :before_step, turn: turn})
       {{:error, Error.new(:cancelled, "Execution cancelled")}, state}
     else
       context = %{original_input: input, history: history}
@@ -391,6 +417,7 @@ defmodule Agora.Orchestrator.Runner do
                 {{:error, error}, %{state | orchestrator_state: new_orch_state}}
 
               {:next, agent_name, input_msg, new_orch_state} ->
+                emit_mode_event(state, :agent_selected, %{agent: agent_name, turn: turn})
                 state = %{state | orchestrator_state: new_orch_state}
                 run_agent_step(input, turn, agent_name, input_msg, state)
             end
@@ -416,6 +443,8 @@ defmodule Agora.Orchestrator.Runner do
           step_meta
         )
 
+        emit_mode_event(state, :step_started, %{agent: agent_name, turn: turn})
+
         step_start = System.monotonic_time()
         result = safe_agent_run(pid, agent_name, input_msg)
 
@@ -425,18 +454,30 @@ defmodule Agora.Orchestrator.Runner do
           step_meta
         )
 
+        step_result = if match?({:ok, _}, result), do: :ok, else: :error
+        emit_mode_event(state, :step_completed, %{agent: agent_name, turn: turn, result: step_result})
+
         # Append turn to history
         turn_record = %{agent: agent_name, input: input_msg, output: result}
         history = state.history ++ [turn_record]
         state = %{state | history: history}
 
-        # Let orchestrator handle the result
+        # Let orchestrator handle the result — supports optional events variant
         case orchestrator.handle_result(orch_state, agent_name, result) do
           {:continue, new_orch_state} ->
             state = %{state | orchestrator_state: new_orch_state}
             orchestration_loop(original_input, turn + 1, state)
 
+          {:continue, new_orch_state, events} ->
+            drain_orch_events(events, state)
+            state = %{state | orchestrator_state: new_orch_state}
+            orchestration_loop(original_input, turn + 1, state)
+
           {:done, result_msg, new_orch_state} ->
+            {{:ok, result_msg}, %{state | orchestrator_state: new_orch_state}}
+
+          {:done, result_msg, new_orch_state, events} ->
+            drain_orch_events(events, state)
             {{:ok, result_msg}, %{state | orchestrator_state: new_orch_state}}
 
           {:error, error, new_orch_state} ->
@@ -523,6 +564,114 @@ defmodule Agora.Orchestrator.Runner do
     opts = Keyword.put(opts, :runner_name, runner_name)
 
     {server_opts, opts}
+  end
+
+  # --- Private: ModeEvent emission ---
+
+  defp emit_mode_event(state, :mode_started, %Message{} = input) do
+    {input_type, input_size} = classify_input(input)
+    mode = resolve_mode(state.orchestrator)
+
+    event = ModeEvent.mode_started(mode, input_type, input_size, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :mode_completed, %{turns: turns}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.mode_completed(mode, turns, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :mode_failed, %{error: error, turns: turns}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.mode_failed(mode, error, turns, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :mode_cancelled, %{boundary: boundary, turn: turn}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.mode_cancelled(mode, boundary, turn, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :agent_selected, %{agent: agent, turn: turn}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.agent_selected(mode, agent, turn, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :step_started, %{agent: agent, turn: turn}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.step_started(mode, agent, turn, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp emit_mode_event(state, :step_completed, %{agent: agent, turn: turn, result: result}) do
+    mode = resolve_mode(state.orchestrator)
+    event = ModeEvent.step_completed(mode, agent, turn, result, state.telemetry_metadata)
+    do_emit(state, event)
+  end
+
+  defp do_emit(state, %ModeEvent{} = event) do
+    # Always emit telemetry
+    Agora.Telemetry.emit(
+      [:agora, :mode, :event],
+      %{system_time: System.system_time()},
+      Map.merge(state.telemetry_metadata, %{event: event})
+    )
+
+    # If emit_fn is set (streaming path), also relay to caller
+    if state.emit_fn, do: state.emit_fn.(event)
+
+    :ok
+  end
+
+  defp drain_orch_events(events, state) when is_list(events) do
+    mode = resolve_mode(state.orchestrator)
+
+    Enum.each(events, fn event_map ->
+      mode_event = build_orch_event(mode, event_map, state.telemetry_metadata)
+      do_emit(state, mode_event)
+    end)
+  end
+
+  defp build_orch_event(mode, %{type: :handoff} = event, metadata) do
+    ModeEvent.handoff(mode, event.from, event.to, event.message, metadata)
+  end
+
+  defp build_orch_event(mode, %{type: :replan} = event, metadata) do
+    ModeEvent.replan(mode, event.replan_count, event.reason, metadata)
+  end
+
+  defp build_orch_event(mode, %{type: type} = event, metadata) do
+    %ModeEvent{
+      type: type,
+      mode: mode,
+      data: Map.delete(event, :type),
+      timestamp: System.system_time(),
+      metadata: metadata
+    }
+  end
+
+  @orchestrator_mode_map %{
+    Agora.Orchestrator.Single => :single,
+    Agora.Orchestrator.RoundRobin => :round_robin,
+    Agora.Orchestrator.GroupChat => :group_chat,
+    Agora.Orchestrator.Supervisor => :supervisor,
+    Agora.Orchestrator.Plan => :plan,
+    Agora.Orchestrator.Handoff => :handoff
+  }
+
+  defp resolve_mode(orchestrator_mod) do
+    Map.get(@orchestrator_mode_map, orchestrator_mod, orchestrator_mod)
+  end
+
+  defp classify_input(%Message{content: content}) when is_binary(content) do
+    {:string, byte_size(content)}
+  end
+
+  defp classify_input(%Message{}) do
+    {:message, 0}
   end
 
   # --- Private: Telemetry ---

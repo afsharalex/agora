@@ -704,17 +704,20 @@ defmodule Agora.Orchestrator.Plan do
     end
   end
 
-  defp apply_review_decision({:replan, _reason}, state) do
+  defp apply_review_decision({:replan, reason}, state) do
     if state.replan_count < state.max_replans do
+      new_count = state.replan_count + 1
+      events = [%{type: :replan, replan_count: new_count, reason: reason || ""}]
+
       {:continue,
        %{
          state
          | phase: :planning,
            plan: [],
            current_step: nil,
-           replan_count: state.replan_count + 1,
+           replan_count: new_count,
            reviewed_blocked: false
-       }}
+       }, events}
     else
       {:error,
        Error.new(

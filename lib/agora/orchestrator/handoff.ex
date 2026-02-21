@@ -464,6 +464,8 @@ defmodule Agora.Orchestrator.Handoff do
          :ok <- check_max_hops(state),
          :ok <- check_allowed_target(target, state),
          :ok <- check_no_repeat_window(target, state) do
+      events = [%{type: :handoff, from: state.current_agent, to: target, message: normalize_message(message)}]
+
       {:continue,
        %{
          state
@@ -471,7 +473,7 @@ defmodule Agora.Orchestrator.Handoff do
            handoff_message: normalize_message(message),
            hop_count: state.hop_count + 1,
            handoff_history: state.handoff_history ++ [target]
-       }}
+       }, events}
     else
       {:error, error} -> {:error, error, state}
     end

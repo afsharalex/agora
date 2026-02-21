@@ -243,7 +243,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = handoff_msg("agent_b", "please handle")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
       assert new_state.handoff_message == "please handle"
@@ -259,7 +259,7 @@ defmodule Agora.Orchestrator.HandoffTest do
           metadata: %{handoff: %{target: :agent_b, message: "context"}}
         )
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
       assert new_state.handoff_message == "context"
@@ -273,7 +273,7 @@ defmodule Agora.Orchestrator.HandoffTest do
           metadata: %{handoff: %{target: "agent_b"}}
         )
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.handoff_message == "response content"
     end
@@ -286,7 +286,7 @@ defmodule Agora.Orchestrator.HandoffTest do
           metadata: %{handoff: %{target: "agent_b"}}
         )
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.handoff_message == ""
     end
@@ -311,7 +311,7 @@ defmodule Agora.Orchestrator.HandoffTest do
           metadata: %{handoff: %{target: "agent_b", message: "go to b"}}
         )
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       # Metadata wins
       assert new_state.current_agent == :agent_b
@@ -394,7 +394,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = assistant_msg("HANDOFF:agent_b:Please help with this")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
       assert new_state.handoff_message == "Please help with this"
@@ -433,7 +433,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = assistant_msg("HANDOFF:agent_b:handle this\nwith more context")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
       assert new_state.handoff_message == "handle this\nwith more context"
@@ -455,7 +455,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!(%{allowed_handoff_targets: %{agent_a: [:agent_a, :agent_b]}})
       msg = handoff_msg("agent_a", "retry myself")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_a
     end
@@ -488,7 +488,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!(%{allowed_handoff_targets: %{agent_a: [:agent_b, :agent_c]}})
       msg = handoff_msg("agent_b", "go")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
     end
@@ -561,7 +561,7 @@ defmodule Agora.Orchestrator.HandoffTest do
 
       msg = handoff_msg("agent_a", "back to a")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_b, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_b, {:ok, msg})
 
       assert new_state.current_agent == :agent_a
     end
@@ -601,7 +601,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!(%{parse_handoff: parse_fn})
       msg = assistant_msg("ROUTE:agent_b:custom format")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
       assert new_state.current_agent == :agent_b
       assert new_state.handoff_message == "custom format"
@@ -692,12 +692,12 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = handoff_msg("agent_b", "go")
 
-      {:continue, state2} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, state2, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
       assert state2.hop_count == 1
 
       msg2 = handoff_msg("agent_c", "continue")
 
-      {:continue, state3} = Handoff.handle_result(state2, :agent_b, {:ok, msg2})
+      {:continue, state3, _events} = Handoff.handle_result(state2, :agent_b, {:ok, msg2})
       assert state3.hop_count == 2
     end
 
@@ -705,12 +705,12 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = handoff_msg("agent_b", "go")
 
-      {:continue, state2} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, state2, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
       assert state2.handoff_history == [:agent_a, :agent_b]
 
       msg2 = handoff_msg("agent_c", "continue")
 
-      {:continue, state3} = Handoff.handle_result(state2, :agent_b, {:ok, msg2})
+      {:continue, state3, _events} = Handoff.handle_result(state2, :agent_b, {:ok, msg2})
       assert state3.handoff_history == [:agent_a, :agent_b, :agent_c]
     end
 
@@ -723,7 +723,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
       msg = handoff_msg("agent_b", "go")
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
       assert new_state.current_agent == :agent_b
     end
 
@@ -736,7 +736,7 @@ defmodule Agora.Orchestrator.HandoffTest do
           metadata: %{handoff: %{target: "agent_b", message: nil}}
         )
 
-      {:continue, new_state} = Handoff.handle_result(state, :agent_a, {:ok, msg})
+      {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
       assert new_state.handoff_message == ""
     end
   end

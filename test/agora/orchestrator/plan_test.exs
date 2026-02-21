@@ -229,7 +229,7 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Review: REPLAN
       review_msg = Message.assistant("REVIEW:REPLAN:Need different approach")
-      {:continue, state} = Plan.handle_result(state, :planner, {:ok, review_msg})
+      {:continue, state, _events} = Plan.handle_result(state, :planner, {:ok, review_msg})
 
       assert state.phase == :planning
       assert state.replan_count == 1
@@ -981,7 +981,7 @@ defmodule Agora.Orchestrator.PlanTest do
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
       review_msg = Message.assistant("REVIEW:REPLAN:need different approach")
 
-      {:continue, state} = Plan.handle_result(state, :planner, {:ok, review_msg})
+      {:continue, state, _events} = Plan.handle_result(state, :planner, {:ok, review_msg})
       assert state.phase == :planning
       assert state.plan == []
       assert state.replan_count == 1
@@ -1322,7 +1322,7 @@ defmodule Agora.Orchestrator.PlanTest do
       assert state.reviewed_blocked == true
 
       # Planner decides to REPLAN
-      {:continue, state} =
+      {:continue, state, _events} =
         Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:REPLAN:new approach")})
 
       assert state.phase == :planning

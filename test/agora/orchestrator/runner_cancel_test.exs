@@ -113,7 +113,9 @@ defmodule Agora.Orchestrator.RunnerCancelTest do
         "runner-cancel-run-#{inspect(ref)}",
         [:agora, :orchestrator, :run, :start],
         fn _event, _measurements, metadata, _config ->
-          send(test_pid, {:run_meta, metadata})
+          if metadata[:test_ref] == ref do
+            send(test_pid, {:run_meta, metadata})
+          end
         end,
         nil
       )
@@ -124,7 +126,7 @@ defmodule Agora.Orchestrator.RunnerCancelTest do
         Runner.start_link(
           orchestrator: Agora.Orchestrator.Single,
           agents: %{agent: config},
-          telemetry_metadata: %{custom_key: "custom_value"}
+          telemetry_metadata: %{test_ref: ref, custom_key: "custom_value"}
         )
 
       {:ok, _} = Runner.run(runner, "hello")
@@ -144,7 +146,9 @@ defmodule Agora.Orchestrator.RunnerCancelTest do
         "runner-cancel-step-#{inspect(ref)}",
         [:agora, :orchestrator, :step, :start],
         fn _event, _measurements, metadata, _config ->
-          send(test_pid, {:step_meta, metadata})
+          if metadata[:test_ref] == ref do
+            send(test_pid, {:step_meta, metadata})
+          end
         end,
         nil
       )
@@ -155,7 +159,7 @@ defmodule Agora.Orchestrator.RunnerCancelTest do
         Runner.start_link(
           orchestrator: Agora.Orchestrator.Single,
           agents: %{agent: config},
-          telemetry_metadata: %{trace_id: "abc123"}
+          telemetry_metadata: %{test_ref: ref, trace_id: "abc123"}
         )
 
       {:ok, _} = Runner.run(runner, "hello")
