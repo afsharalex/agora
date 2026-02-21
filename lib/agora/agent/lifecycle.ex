@@ -98,7 +98,7 @@ defmodule Agora.Agent.Lifecycle do
     validate!(lc)
     {:ok, lc}
   rescue
-    e in ArgumentError -> {:error, Exception.message(e)}
+    e -> {:error, Exception.message(e)}
   end
 
   @doc """

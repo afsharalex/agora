@@ -826,6 +826,73 @@ defmodule Agora.Agent.StateMachineTest do
       assert {:ok, :active} = Agent.get_lifecycle_state(pid)
       assert Process.alive?(pid)
     end
+
+    test "message_match predicate crash does not take down the process" do
+      config =
+        lifecycle_config(
+          initial_state: :active,
+          states: %{active: %StateConfig{}, done: %StateConfig{}},
+          transitions: [
+            %{
+              from: :active,
+              to: :done,
+              trigger: {:message_match, fn _msg -> raise "predicate crash!" end},
+              guard: nil
+            }
+          ]
+        )
+
+      pid = start_agent(config)
+      {:ok, _} = Agent.run(pid, "test")
+
+      # Predicate crash => treated as false => no transition
+      assert {:ok, :active} = Agent.get_lifecycle_state(pid)
+      assert Process.alive?(pid)
+    end
+
+    test "tool_result predicate crash does not take down the process" do
+      tool = echo_tool("check")
+      calls = :counters.new(1, [:atomics])
+
+      config =
+        lifecycle_config(
+          [
+            initial_state: :active,
+            states: %{active: %StateConfig{tools: [tool]}, done: %StateConfig{}},
+            transitions: [
+              %{
+                from: :active,
+                to: :done,
+                trigger:
+                  {:tool_result, "check", fn _result -> raise "tool_result predicate crash!" end},
+                guard: nil
+              }
+            ]
+          ],
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              :counters.add(calls, 1, 1)
+
+              if :counters.get(calls, 1) == 1 do
+                {:ok,
+                 Message.assistant(nil, [
+                   %Agora.ToolCall{id: "tc_1", name: "check", arguments: %{}}
+                 ])}
+              else
+                {:ok, Message.assistant("Done")}
+              end
+            end
+          ]
+        )
+
+      pid = start_agent(config)
+      {:ok, _} = Agent.run(pid, "test")
+
+      # Predicate crash => treated as false => no transition
+      assert {:ok, :active} = Agent.get_lifecycle_state(pid)
+      assert Process.alive?(pid)
+    end
   end
 
   describe "memory" do

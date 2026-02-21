@@ -257,6 +257,17 @@ defmodule Agora.Agent.LifecycleTest do
       assert {:error, reason} = Lifecycle.validate(invalid)
       assert reason =~ "at least one state"
     end
+
+    test "returns {:error, reason} for malformed transition maps" do
+      # Transition missing :from/:to keys causes FunctionClauseError, not ArgumentError
+      invalid = %Lifecycle{
+        initial_state: :a,
+        states: %{a: %StateConfig{}, b: %StateConfig{}},
+        transitions: [%{trigger: {:tool_call, "x"}}]
+      }
+
+      assert {:error, _reason} = Lifecycle.validate(invalid)
+    end
   end
 
   describe "StateConfig" do

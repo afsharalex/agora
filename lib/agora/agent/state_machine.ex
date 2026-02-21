@@ -324,7 +324,10 @@ defmodule Agora.Agent.StateMachine do
         {:next_state, target, data}
 
       :no_transition ->
-        {:keep_state, data}
+        # Re-arm state_timeout if configured for current state, since
+        # the one-shot timeout may have been suppressed during streaming.
+        actions = timeout_actions(current_state, data.lifecycle)
+        {:keep_state, data, actions}
     end
   end
 
@@ -491,11 +494,13 @@ defmodule Agora.Agent.StateMachine do
   end
 
   defp trigger_matches?({:tool_result, name, pred}, facts, _outcome) do
-    Enum.any?(facts.tool_results, fn tr -> tr.name == name && pred.(tr) end)
+    Enum.any?(facts.tool_results, fn tr ->
+      tr.name == name && safe_predicate_call(pred, tr, "tool_result predicate")
+    end)
   end
 
   defp trigger_matches?({:message_match, pred}, _facts, {:done, response}) do
-    pred.(response)
+    safe_predicate_call(pred, response, "message_match predicate")
   end
 
   defp trigger_matches?({:message_match, _pred}, _facts, {:error, _}) do
@@ -678,6 +683,20 @@ defmodule Agora.Agent.StateMachine do
                 format_crash(kind, reason)
             )
         end
+    end
+  end
+
+  defp safe_predicate_call(pred, arg, label) do
+    try do
+      pred.(arg)
+    catch
+      kind, reason ->
+        Logger.warning(
+          "[Agora.Agent.StateMachine] #{label} crashed: " <>
+            format_crash(kind, reason)
+        )
+
+        false
     end
   end
 
