@@ -60,7 +60,10 @@ defmodule Agora.Orchestrator.Plan do
     with {:ok, planner} <- fetch_planner(config),
          {:ok, all_agents} <- fetch_agents(config, planner),
          {:ok, parse_plan} <- validate_parse_plan(Map.get(config, :parse_plan)),
-         {:ok, parse_review} <- validate_parse_review(Map.get(config, :parse_review)) do
+         {:ok, parse_review} <- validate_parse_review(Map.get(config, :parse_review)),
+         {:ok, max_retries} <- validate_limit(config, :max_retries_per_step, @default_max_retries),
+         {:ok, max_replans} <- validate_limit(config, :max_replans, @default_max_replans),
+         {:ok, max_plan_steps} <- validate_limit(config, :max_plan_steps, @default_max_plan_steps) do
       workers = all_agents |> Enum.reject(&(&1 == planner)) |> Enum.sort()
 
       agent_lookup =
@@ -78,9 +81,9 @@ defmodule Agora.Orchestrator.Plan do
          replan_count: 0,
          failure_count: 0,
          original_task: nil,
-         max_retries_per_step: Map.get(config, :max_retries_per_step, @default_max_retries),
-         max_replans: Map.get(config, :max_replans, @default_max_replans),
-         max_plan_steps: Map.get(config, :max_plan_steps, @default_max_plan_steps),
+         max_retries_per_step: max_retries,
+         max_replans: max_replans,
+         max_plan_steps: max_plan_steps,
          parse_plan: parse_plan,
          parse_review: parse_review,
          reviewed_blocked: false
@@ -114,7 +117,7 @@ defmodule Agora.Orchestrator.Plan do
         summary = summarize_artifacts(state)
         {:done, Message.assistant(summary), state}
 
-      :blocked ->
+      {:blocked, failed_step} ->
         if state.reviewed_blocked do
           {:error,
            Error.new(
@@ -127,7 +130,8 @@ defmodule Agora.Orchestrator.Plan do
           state = %{
             state
             | phase: :reviewing,
-              reviewed_blocked: true
+              reviewed_blocked: true,
+              current_step: failed_step.id
           }
 
           {:next, state.planner, Message.user(prompt), state}
@@ -248,6 +252,20 @@ defmodule Agora.Orchestrator.Plan do
     end
   end
 
+  defp validate_limit(config, key, default) do
+    value = Map.get(config, key, default)
+
+    if is_integer(value) and value >= 0 do
+      {:ok, value}
+    else
+      {:error,
+       Error.new(
+         :orchestration_error,
+         "#{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
+       )}
+    end
+  end
+
   defp validate_parse_plan(nil), do: {:ok, nil}
   defp validate_parse_plan(fun) when is_function(fun, 2), do: {:ok, fun}
 
@@ -344,9 +362,8 @@ defmodule Agora.Orchestrator.Plan do
     case String.split(line, ":", parts: 4) do
       ["STEP", id_str, agent_str, rest] ->
         with {:ok, id} <- parse_step_id(id_str),
-             {:ok, agent} <- lookup_agent(String.trim(agent_str), agent_lookup) do
-          {description, deps} = extract_deps(rest)
-
+             {:ok, agent} <- lookup_agent(String.trim(agent_str), agent_lookup),
+             {:ok, description, deps} <- extract_deps(rest) do
           if String.trim(description) == "" do
             {:error,
              Error.new(:orchestration_error, "Step #{id} has empty description")}
@@ -399,30 +416,51 @@ defmodule Agora.Orchestrator.Plan do
   defp extract_deps(rest) do
     case String.split(rest, ":DEP:") do
       [desc] ->
-        {desc, []}
+        {:ok, desc, []}
 
       [desc | dep_parts] ->
         dep_str = Enum.join(dep_parts, ":DEP:")
-        deps = parse_dep_ids(dep_str)
-        {desc, deps}
+
+        case parse_dep_ids(dep_str) do
+          {:ok, deps} -> {:ok, desc, deps}
+          {:error, _} = err -> err
+        end
     end
   end
 
   defp parse_dep_ids(dep_str) do
-    dep_str
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(fn s ->
-      case Integer.parse(s) do
-        {id, ""} -> id
-        _ -> nil
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
+    tokens =
+      dep_str
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    results =
+      Enum.map(tokens, fn s ->
+        case Integer.parse(s) do
+          {id, ""} when id > 0 -> {:ok, id}
+          _ -> {:error, s}
+        end
+      end)
+
+    case Enum.find(results, &match?({:error, _}, &1)) do
+      {:error, bad_token} ->
+        {:error,
+         Error.new(
+           :orchestration_error,
+           "Invalid dependency ID: #{inspect(bad_token)}"
+         )}
+
+      nil ->
+        {:ok, Enum.map(results, fn {:ok, id} -> id end)}
+    end
   end
 
   # --- Private: Plan validation ---
+
+  defp validate_plan([], _state) do
+    {:error, Error.new(:orchestration_error, "Plan contains no steps")}
+  end
 
   defp validate_plan(steps, state) do
     ids = Enum.map(steps, & &1.id)
@@ -686,7 +724,23 @@ defmodule Agora.Orchestrator.Plan do
       if ready do
         {:ok, ready}
       else
-        :blocked
+        # Find the first failed step that is blocking pending steps
+        failed_dep_ids =
+          pending
+          |> Enum.flat_map(fn step ->
+            Enum.filter(step.deps, fn dep_id ->
+              dep = get_step(state, dep_id)
+              dep.status == :failed
+            end)
+          end)
+          |> Enum.uniq()
+
+        failed_step =
+          state.plan
+          |> Enum.filter(fn s -> s.id in failed_dep_ids end)
+          |> Enum.min_by(& &1.id)
+
+        {:blocked, failed_step}
       end
     end
   end
@@ -878,7 +932,20 @@ defmodule Agora.Orchestrator.Plan do
        )}
   end
 
-  defp validate_parse_result({:ok, _} = result, _name), do: result
+  defp validate_parse_result({:ok, steps}, :parse_plan) when is_list(steps) do
+    case validate_step_shapes(steps) do
+      :ok -> {:ok, steps}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp validate_parse_result({:ok, decision}, :parse_review) when is_tuple(decision) do
+    case validate_review_shape(decision) do
+      :ok -> {:ok, decision}
+      {:error, _} = err -> err
+    end
+  end
+
   defp validate_parse_result({:error, %Error{}} = result, _name), do: result
 
   defp validate_parse_result(other, name) do
@@ -887,6 +954,45 @@ defmodule Agora.Orchestrator.Plan do
        :orchestration_error,
        "Custom #{name} returned invalid shape: #{inspect(other)}"
      )}
+  end
+
+  defp validate_step_shapes([]), do: :ok
+
+  defp validate_step_shapes([step | rest]) do
+    cond do
+      not is_map(step) ->
+        {:error,
+         Error.new(:orchestration_error, "Custom parse_plan step is not a map: #{inspect(step)}")}
+
+      not (is_integer(step[:id]) and step[:id] > 0) ->
+        {:error,
+         Error.new(:orchestration_error, "Custom parse_plan step has invalid :id: #{inspect(step[:id])}")}
+
+      not is_binary(step[:description]) ->
+        {:error,
+         Error.new(:orchestration_error, "Custom parse_plan step has invalid :description: #{inspect(step[:description])}")}
+
+      not is_atom(step[:assignee]) ->
+        {:error,
+         Error.new(:orchestration_error, "Custom parse_plan step has invalid :assignee: #{inspect(step[:assignee])}")}
+
+      not is_list(step[:deps]) ->
+        {:error,
+         Error.new(:orchestration_error, "Custom parse_plan step has invalid :deps: #{inspect(step[:deps])}")}
+
+      true ->
+        validate_step_shapes(rest)
+    end
+  end
+
+  @valid_review_shapes [:complete, :continue, :retry, :replan]
+
+  defp validate_review_shape({action, _payload}) when action in @valid_review_shapes, do: :ok
+  defp validate_review_shape({:reassign, agent, _reason}) when is_binary(agent), do: :ok
+
+  defp validate_review_shape(other) do
+    {:error,
+     Error.new(:orchestration_error, "Custom parse_review returned invalid decision shape: #{inspect(other)}")}
   end
 
   defp format_crash(:error, %{__exception__: true} = exception),

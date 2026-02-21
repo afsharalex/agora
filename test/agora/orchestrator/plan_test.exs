@@ -128,6 +128,52 @@ defmodule Agora.Orchestrator.PlanTest do
       assert state.max_plan_steps == 20
     end
 
+    test "negative max_retries_per_step → error" do
+      assert {:error, %Error{type: :orchestration_error, message: msg}} =
+               Plan.init(init_config(%{max_retries_per_step: -1}))
+
+      assert msg =~ "max_retries_per_step"
+      assert msg =~ "non-negative integer"
+    end
+
+    test "non-integer max_replans → error" do
+      assert {:error, %Error{type: :orchestration_error, message: msg}} =
+               Plan.init(init_config(%{max_replans: "two"}))
+
+      assert msg =~ "max_replans"
+      assert msg =~ "non-negative integer"
+    end
+
+    test "nil max_plan_steps → error" do
+      assert {:error, %Error{type: :orchestration_error, message: msg}} =
+               Plan.init(init_config(%{max_plan_steps: nil}))
+
+      assert msg =~ "max_plan_steps"
+      assert msg =~ "non-negative integer"
+    end
+
+    test "float max_retries_per_step → error" do
+      assert {:error, %Error{type: :orchestration_error, message: msg}} =
+               Plan.init(init_config(%{max_retries_per_step: 2.5}))
+
+      assert msg =~ "max_retries_per_step"
+    end
+
+    test "zero limits are accepted" do
+      {:ok, state} =
+        Plan.init(
+          init_config(%{
+            max_retries_per_step: 0,
+            max_replans: 0,
+            max_plan_steps: 0
+          })
+        )
+
+      assert state.max_retries_per_step == 0
+      assert state.max_replans == 0
+      assert state.max_plan_steps == 0
+    end
+
     test "workers sorted alphabetically" do
       {:ok, state} =
         Plan.init(%{
@@ -292,6 +338,39 @@ defmodule Agora.Orchestrator.PlanTest do
       {:next, :planner, msg, state} = Plan.next(state, make_context())
       assert msg.content =~ "blocked"
       assert state.phase == :reviewing
+      assert state.reviewed_blocked == true
+    end
+
+    test "blocked sets current_step to first failed blocking step" do
+      state =
+        init_and_plan(%{}, [
+          %{id: 1, agent: "researcher", desc: "First task"},
+          %{id: 2, agent: "writer", desc: "Second task"},
+          %{id: 3, agent: "researcher", desc: "Depends on both", deps: [1, 2]}
+        ])
+
+      # Execute step 1 successfully
+      {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+      {:continue, state} =
+        Plan.handle_result(state, :researcher, {:ok, Message.assistant("done 1")})
+
+      {:next, :planner, _msg, state} = Plan.next(state, make_context())
+      {:continue, state} =
+        Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:next")})
+
+      # Execute step 2 → fails
+      {:next, :writer, _msg, state} = Plan.next(state, make_context())
+      {:continue, state} =
+        Plan.handle_result(state, :writer, {:error, Error.new(:provider_error, "fail")})
+
+      # Review step 2 failure: CONTINUE
+      {:next, :planner, _msg, state} = Plan.next(state, make_context())
+      {:continue, state} =
+        Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:keep going")})
+
+      # Now step 3 is blocked by failed step 2; current_step should be set to 2 (the blocker)
+      {:next, :planner, _msg, state} = Plan.next(state, make_context())
+      assert state.current_step == 2
       assert state.reviewed_blocked == true
     end
 
@@ -571,6 +650,87 @@ defmodule Agora.Orchestrator.PlanTest do
         Plan.handle_result(state, :planner, {:ok, msg})
 
       assert err_msg =~ "invalid shape"
+    end
+
+    test "custom parse_plan returning empty list → error" do
+      custom_fn = fn _content, _lookup -> {:ok, []} end
+
+      {:ok, state} = Plan.init(init_config(%{parse_plan: custom_fn}))
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      msg = Message.assistant("any plan content")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "no steps"
+    end
+
+    test "custom parse_plan with malformed step shape → error" do
+      custom_fn = fn _content, _lookup ->
+        {:ok, [%{id: "not_an_int", description: "bad", assignee: :researcher, deps: []}]}
+      end
+
+      {:ok, state} = Plan.init(init_config(%{parse_plan: custom_fn}))
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      msg = Message.assistant("any plan content")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "invalid :id"
+    end
+
+    test "custom parse_plan with missing keys → error" do
+      custom_fn = fn _content, _lookup ->
+        {:ok, [%{id: 1}]}
+      end
+
+      {:ok, state} = Plan.init(init_config(%{parse_plan: custom_fn}))
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      msg = Message.assistant("any plan content")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "invalid :description"
+    end
+
+    test "custom parse_review with invalid decision shape → error" do
+      custom_fn = fn _content -> {:ok, :not_a_valid_tuple} end
+
+      state =
+        init_and_plan(%{parse_review: custom_fn}, [
+          %{id: 1, agent: "researcher", desc: "Research"}
+        ])
+
+      {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+      {:continue, state} =
+        Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
+
+      {:next, :planner, _msg, state} = Plan.next(state, make_context())
+      review_msg = Message.assistant("review this")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, review_msg})
+
+      assert err_msg =~ "invalid shape"
+    end
+
+    test "malformed dependency IDs are rejected" do
+      {:ok, state} = Plan.init(init_config())
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      content = "PLAN\nSTEP:1:researcher:Research\nSTEP:2:writer:Write:DEP:1,abc\nEND_PLAN"
+      msg = Message.assistant(content)
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "Invalid dependency ID"
+      assert err_msg =~ "abc"
     end
 
     test "missing PLAN markers → error" do
