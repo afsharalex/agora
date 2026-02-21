@@ -98,6 +98,39 @@ defmodule Agora.ExecutionTest do
         )
     end
 
+    test "dispatches :handoff to Handoff orchestrator" do
+      a_fn = fn _messages, _config ->
+        {:ok,
+         Message.new(:assistant, "Routing",
+           metadata: %{handoff: %{target: "worker", message: "handle this"}}
+         )}
+      end
+
+      worker_fn = fn _messages, _config ->
+        {:ok, Message.assistant("Done")}
+      end
+
+      a_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [echo_mode: :function, echo_function: a_fn]
+        )
+
+      worker_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [echo_mode: :function, echo_function: worker_fn]
+        )
+
+      {:ok, %Message{content: "Done"}} =
+        Execution.run(:handoff, "hello",
+          agents: %{triage: a_config, worker: worker_config},
+          orchestrator_opts: [initial_agent: :triage]
+        )
+    end
+
     test "returns config_error for unknown mode" do
       config = AgentConfig.new!(provider: :echo, model: "echo")
 
@@ -236,6 +269,7 @@ defmodule Agora.ExecutionTest do
       assert Map.has_key?(modes, :group_chat)
       assert Map.has_key?(modes, :supervisor)
       assert Map.has_key?(modes, :plan)
+      assert Map.has_key?(modes, :handoff)
     end
   end
 

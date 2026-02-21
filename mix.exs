@@ -126,7 +126,8 @@ defmodule Agora.MixProject do
           Agora.Orchestrator.Supervisor,
           Agora.Orchestrator.ChatRoom,
           Agora.Orchestrator.GroupChat,
-          Agora.Orchestrator.Plan
+          Agora.Orchestrator.Plan,
+          Agora.Orchestrator.Handoff
         ],
         Memory: [
           Agora.Memory,

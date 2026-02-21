@@ -165,7 +165,7 @@ defmodule Agora do
   @doc """
   Unified mode-first execution entry point.
 
-  For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`):
+  For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`, `:handoff`):
   input is `String.t() | Message.t()`, `:agents` option required.
 
   For workflow modes:

@@ -30,6 +30,38 @@ defmodule Agora.RunModeTest do
         )
     end
 
+    test ":handoff mode" do
+      a_fn = fn _messages, _config ->
+        {:ok,
+         Message.new(:assistant, "Routing",
+           metadata: %{handoff: %{target: "worker", message: "go"}}
+         )}
+      end
+
+      worker_fn = fn _messages, _config ->
+        {:ok, Message.assistant("Handled")}
+      end
+
+      a_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [echo_mode: :function, echo_function: a_fn]
+        )
+
+      worker_config = AgentConfig.new!(
+        provider: :echo,
+        model: "echo",
+        provider_opts: [echo_mode: :function, echo_function: worker_fn]
+      )
+
+      {:ok, %Message{content: "Handled"}} =
+        Agora.run_mode(:handoff, "hello",
+          agents: %{triage: a_config, worker: worker_config},
+          orchestrator_opts: [initial_agent: :triage]
+        )
+    end
+
     test ":supervisor mode" do
       config =
         AgentConfig.new!(

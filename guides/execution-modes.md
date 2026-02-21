@@ -17,6 +17,7 @@ LLM-driven coordination patterns where agents take turns based on an orchestrato
 | `:group_chat` | `Agora.Orchestrator.GroupChat` | Shared transcript discussion |
 | `:supervisor` | `Agora.Orchestrator.Supervisor` | Delegation to workers |
 | `:plan` | `Agora.Orchestrator.Plan` | Autonomous plan-execute-review |
+| `:handoff` | `Agora.Orchestrator.Handoff` | Decentralized baton-passing |
 
 ### Workflow Modes
 
@@ -257,6 +258,93 @@ orchestrator_opts: [
 | Complex DAG with mixed topologies | `:dag` |
 | LLM-driven multi-agent coordination | Orchestrator modes |
 | Autonomous plan-execute-review cycle | `:plan` |
+| Peer-to-peer agent routing / triage | `:handoff` |
+
+## Handoff Mode
+
+Handoff Mode provides decentralized baton-passing orchestration. Each agent decides who runs next by emitting a handoff directive. An agent that returns without a handoff is declaring the task done.
+
+### Basic Usage
+
+```elixir
+{:ok, response} = Agora.run_mode(:handoff, "I have a billing question",
+  agents: %{
+    triage: triage_config,
+    support: support_config,
+    billing: billing_config
+  },
+  orchestrator_opts: [initial_agent: :triage]
+)
+```
+
+### How It Works
+
+1. The `:initial_agent` receives the user input
+2. Each agent processes its input and either completes (no handoff) or hands off to another agent
+3. Handoff carries a message to the next agent as context
+4. The chain continues until an agent completes or a safety limit is hit
+
+### Handoff Format
+
+Agents can hand off using metadata (preferred) or a directive in the response content.
+
+**Metadata handoff** (structured, recommended):
+
+```elixir
+Message.new(:assistant, "Routing to billing.",
+  metadata: %{handoff: %{target: "billing", message: "Customer needs refund help"}})
+```
+
+**Directive handoff** (text-based fallback):
+
+```
+HANDOFF:billing:Customer needs refund help
+```
+
+When a custom parser is configured, it fully replaces the default directive format — there is no fallback.
+
+### Options
+
+Pass these via `:orchestrator_opts`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:initial_agent` | required | Atom name of the first agent to run |
+| `:max_hops` | `10` | Maximum handoffs before error |
+| `:no_repeat_window` | `nil` | Sliding window to block recent agent repeats |
+| `:allowed_handoff_targets` | `nil` | `%{source => [targets]}` policy map |
+| `:parse_handoff` | `nil` | Custom 2-arity parser function |
+
+### Handoff Policy
+
+**Self-handoff**: Blocked by default. To allow, include the agent in its own `allowed_handoff_targets` list.
+
+**Allowed targets**: When configured, agents not present as keys in the map cannot hand off at all (fail-closed). When `nil`, any agent can hand off to any other agent (except self).
+
+**No-repeat window**: When set, prevents handing off to an agent that appeared in the last N holders. When `nil`, loops are bounded only by `max_hops`.
+
+### Custom Parser
+
+Override the default directive parsing with a custom function:
+
+```elixir
+custom_parser = fn content, agent_lookup ->
+  # Return {:handoff, atom(), String.t()} | :no_handoff | {:error, Error.t()}
+  case Regex.run(~r/ROUTE:(\w+):(.+)/s, content) do
+    [_, name, msg] ->
+      case Map.fetch(agent_lookup, name) do
+        {:ok, atom} -> {:handoff, atom, msg}
+        :error -> {:error, Error.new(:orchestration_error, "Unknown agent: #{name}")}
+      end
+    nil -> :no_handoff
+  end
+end
+
+orchestrator_opts: [
+  initial_agent: :triage,
+  parse_handoff: custom_parser
+]
+```
 
 ## Cancellation
 
