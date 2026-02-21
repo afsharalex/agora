@@ -46,10 +46,8 @@ defmodule Agora.Agent do
 
   require Logger
 
-  alias Agora.{AgentConfig, Error, Memory, Message, Provider, StreamEvent, ToolBroker}
-  alias Agora.Agent.Loop
-  alias Agora.Middleware.{Chain, Context}
-  alias Agora.Provider.StreamAccumulator
+  alias Agora.{AgentConfig, Error, Memory, Message, StreamEvent}
+  alias Agora.Agent.{Loop, StreamLoop}
 
   @type status :: :idle | :running | :streaming
 
@@ -469,18 +467,6 @@ defmodule Agora.Agent do
       {{:error, error}, %{state | messages: recovered_messages}}
   end
 
-  # --- Private: Halt reason normalization (used by streaming path) ---
-
-  defp wrap_halt_reason(%Error{} = error), do: error
-
-  defp wrap_halt_reason(reason) when is_binary(reason) do
-    Error.new(:middleware_error, reason)
-  end
-
-  defp wrap_halt_reason(reason) do
-    Error.new(:middleware_error, "Middleware halted: #{inspect(reason)}")
-  end
-
   # --- Private: Stream memory save ---
 
   defp stream_memory_save(%{memory_state: nil} = state), do: state
@@ -528,7 +514,17 @@ defmodule Agora.Agent do
   # --- Private: Streaming loop ---
 
   defp safe_streaming_loop(messages, state, caller, agent_ref) do
-    streaming_loop(messages, state, caller, agent_ref, 0, state.middleware_metadata)
+    emit_fn = fn event -> send(caller, {Agora.Stream, agent_ref, event}) end
+
+    loop_state = %Loop.State{
+      config: state.config,
+      messages: messages,
+      middleware_metadata: state.middleware_metadata,
+      iteration: state.iteration,
+      on_messages_update: nil
+    }
+
+    StreamLoop.run(loop_state, emit_fn)
   catch
     kind, reason ->
       error =
@@ -541,346 +537,6 @@ defmodule Agora.Agent do
       send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
       send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
       {:error, error, messages}
-  end
-
-  defp streaming_loop(messages, state, caller, agent_ref, iteration, metadata) do
-    config = state.config
-
-    if iteration >= config.max_iterations do
-      error =
-        Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
-          max_iterations: config.max_iterations,
-          iterations: iteration
-        })
-
-      send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-      send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-      {:error, error, messages}
-    else
-      iteration = iteration + 1
-      middleware = config.middleware
-
-      # Run :before_provider_call middleware
-      {messages, config, metadata} =
-        case run_streaming_hook(:before_provider_call, messages, config, middleware, metadata) do
-          {:ok, ctx} ->
-            {ctx.messages, ctx.config, ctx.metadata}
-
-          {:halt, reason} ->
-            error = wrap_halt_reason(reason)
-            send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-            send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-            throw({:halt, error, messages})
-        end
-
-      case Provider.stream_chat(config.provider, messages, config) do
-        {:error, %Error{} = error} ->
-          send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-          send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-          {:error, error, messages}
-
-        {:ok, %{pid: provider_pid, ref: provider_ref}} ->
-          # Relay events from provider to caller, accumulating the message
-          relay_result =
-            relay_events(
-              provider_pid,
-              provider_ref,
-              caller,
-              agent_ref,
-              StreamAccumulator.new(),
-              middleware,
-              metadata,
-              messages,
-              config
-            )
-
-          case relay_result do
-            {:error, error, _acc, _metadata} ->
-              # Provider crashed/timed out/errored — do NOT persist partial content
-              send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-              {:error, error, messages}
-
-            {:ok, acc, metadata} ->
-              message = StreamAccumulator.to_message(acc)
-
-              # Run :after_provider_call middleware
-              {message, tool_calls, metadata} =
-                case run_after_provider_call(message, messages, config, middleware, metadata) do
-                  {:ok, ctx} ->
-                    {ctx.response, ctx.tool_calls, ctx.metadata}
-
-                  {:halt, reason} ->
-                    error = wrap_halt_reason(reason)
-                    send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-                    send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-                    throw({:halt, error, messages ++ [message]})
-                end
-
-              if tool_calls != [] do
-                # Execute tools and emit tool_result events
-                assistant_msg = %{message | tool_calls: tool_calls}
-                new_messages = messages ++ [assistant_msg]
-
-                case execute_streaming_tools(
-                       tool_calls,
-                       config,
-                       middleware,
-                       metadata,
-                       caller,
-                       agent_ref
-                     ) do
-                  {:halt, error, _results, _metadata} ->
-                    # Middleware halted tool execution — don't persist the partial turn
-                    # (assistant + tool results). Roll back to pre-tool-turn state.
-                    send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-                    send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-                    {:error, error, messages}
-
-                  {:ok, tool_results, metadata} ->
-                    tool_msg = Message.tool_results(tool_results)
-                    new_messages = new_messages ++ [tool_msg]
-
-                    # Continue the loop for next provider call
-                    streaming_loop(new_messages, state, caller, agent_ref, iteration, metadata)
-                end
-              else
-                # Final text response — done
-                final_response =
-                  if message.tool_calls != [] do
-                    %{message | tool_calls: []}
-                  else
-                    message
-                  end
-
-                new_messages = messages ++ [final_response]
-
-                send(
-                  caller,
-                  {Agora.Stream, agent_ref, StreamEvent.message_complete(final_response)}
-                )
-
-                send(caller, {Agora.Stream, agent_ref, StreamEvent.done()})
-                {:ok, new_messages, %{iteration: iteration, middleware_metadata: metadata}}
-              end
-          end
-      end
-    end
-  catch
-    {:halt, error, msgs} -> {:error, error, msgs}
-  end
-
-  defp relay_events(
-         provider_pid,
-         provider_ref,
-         caller,
-         agent_ref,
-         acc,
-         middleware,
-         metadata,
-         messages,
-         config
-       ) do
-    mref = Process.monitor(provider_pid)
-
-    result =
-      do_relay(mref, provider_ref, caller, agent_ref, acc, middleware, metadata, messages, config)
-
-    Process.demonitor(mref, [:flush])
-    result
-  end
-
-  defp do_relay(
-         mref,
-         provider_ref,
-         caller,
-         agent_ref,
-         acc,
-         middleware,
-         metadata,
-         messages,
-         config
-       ) do
-    receive do
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :done}} ->
-        {:ok, acc, metadata}
-
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :error} = event} ->
-        maybe_forward_event(event, caller, agent_ref, middleware, metadata, messages, config)
-        {:error, event.data, acc, metadata}
-
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :message_complete}} ->
-        # Provider sent message_complete — we'll send our own after middleware
-        do_relay(
-          mref,
-          provider_ref,
-          caller,
-          agent_ref,
-          acc,
-          middleware,
-          metadata,
-          messages,
-          config
-        )
-
-      {Agora.Stream, ^provider_ref, %StreamEvent{} = event} ->
-        acc = StreamAccumulator.apply(acc, event)
-
-        {event, metadata} =
-          maybe_run_stream_middleware(event, middleware, metadata, messages, config)
-
-        if event, do: send(caller, {Agora.Stream, agent_ref, event})
-
-        do_relay(
-          mref,
-          provider_ref,
-          caller,
-          agent_ref,
-          acc,
-          middleware,
-          metadata,
-          messages,
-          config
-        )
-
-      {:DOWN, ^mref, :process, _, reason} ->
-        error = Error.new(:streaming_error, "Provider stream crashed: #{inspect(reason)}")
-        send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-        {:error, error, acc, metadata}
-    after
-      300_000 ->
-        error = Error.new(:timeout, "Provider stream timed out after 300s")
-        send(caller, {Agora.Stream, agent_ref, StreamEvent.error(error)})
-        {:error, error, acc, metadata}
-    end
-  end
-
-  defp maybe_forward_event(event, caller, agent_ref, middleware, metadata, messages, config) do
-    {event, _metadata} =
-      maybe_run_stream_middleware(event, middleware, metadata, messages, config)
-
-    if event, do: send(caller, {Agora.Stream, agent_ref, event})
-  end
-
-  defp maybe_run_stream_middleware(event, [], _metadata, _messages, _config) do
-    {event, %{}}
-  end
-
-  defp maybe_run_stream_middleware(event, middleware, metadata, messages, config) do
-    ctx =
-      Context.new(
-        hook: :on_stream_event,
-        stream_event: event,
-        messages: messages,
-        config: config,
-        metadata: metadata
-      )
-
-    case Chain.run(middleware, ctx) do
-      {:ok, ctx} -> {ctx.stream_event, ctx.metadata}
-      {:halt, _reason} -> {nil, metadata}
-    end
-  end
-
-  defp run_streaming_hook(_hook, messages, config, [], metadata) do
-    {:ok,
-     Context.new(
-       hook: :before_provider_call,
-       messages: messages,
-       config: config,
-       metadata: metadata
-     )}
-  end
-
-  defp run_streaming_hook(hook, messages, config, middleware, metadata) do
-    ctx =
-      Context.new(
-        hook: hook,
-        messages: messages,
-        config: config,
-        metadata: metadata
-      )
-
-    Chain.run(middleware, ctx)
-  end
-
-  defp run_after_provider_call(response, messages, config, [], metadata) do
-    {:ok,
-     Context.new(
-       hook: :after_provider_call,
-       response: response,
-       tool_calls: response.tool_calls,
-       messages: messages,
-       config: config,
-       metadata: metadata
-     )}
-  end
-
-  defp run_after_provider_call(response, messages, config, middleware, metadata) do
-    ctx =
-      Context.new(
-        hook: :after_provider_call,
-        messages: messages,
-        response: response,
-        tool_calls: response.tool_calls,
-        config: config,
-        metadata: metadata
-      )
-
-    Chain.run(middleware, ctx)
-  end
-
-  defp execute_streaming_tools(tool_calls, config, middleware, metadata, caller, agent_ref) do
-    # Run :before_tool_call middleware if present
-    {tool_calls, metadata, halted?} =
-      if middleware != [] do
-        ctx =
-          Context.new(
-            hook: :before_tool_call,
-            tool_calls: tool_calls,
-            config: config,
-            metadata: metadata
-          )
-
-        case Chain.run(middleware, ctx) do
-          {:ok, ctx} -> {ctx.tool_calls, ctx.metadata, false}
-          {:halt, reason} -> {[], metadata, {:halt, reason}}
-        end
-      else
-        {tool_calls, metadata, false}
-      end
-
-    case halted? do
-      {:halt, reason} ->
-        error = wrap_halt_reason(reason)
-        {:halt, error, [], metadata}
-
-      false ->
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools)
-
-        # Emit tool_result events to caller
-        Enum.each(results, fn result ->
-          send(caller, {Agora.Stream, agent_ref, StreamEvent.tool_result(result)})
-        end)
-
-        # Run :after_tool_call middleware if present
-        if middleware != [] do
-          ctx =
-            Context.new(
-              hook: :after_tool_call,
-              tool_calls: tool_calls,
-              tool_results: results,
-              config: config,
-              metadata: metadata
-            )
-
-          case Chain.run(middleware, ctx) do
-            {:ok, ctx} -> {:ok, results, ctx.metadata}
-            {:halt, reason} -> {:halt, wrap_halt_reason(reason), results, metadata}
-          end
-        else
-          {:ok, results, metadata}
-        end
-    end
   end
 
   # --- Private: Telemetry helpers ---
