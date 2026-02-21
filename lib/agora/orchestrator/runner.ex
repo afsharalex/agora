@@ -76,6 +76,26 @@ defmodule Agora.Orchestrator.Runner do
   end
 
   @doc """
+  Starts a streaming orchestration run and returns a `Stream` handle.
+
+  The returned `Agora.Stream` emits `ModeEvent` structs as the orchestration
+  progresses. The stream terminates with a `%ModeEvent{type: :done}` event
+  on success, or `%ModeEvent{type: :error}` if the streaming task crashes.
+
+  Only callable when the runner is `:idle`. Returns an error if the runner
+  is already running or streaming.
+  """
+  @spec stream_run(GenServer.server(), String.t() | Message.t()) ::
+          {:ok, Agora.Stream.t()} | {:error, Error.t()}
+  def stream_run(runner, input) when is_binary(input) do
+    stream_run(runner, Message.user(input))
+  end
+
+  def stream_run(runner, %Message{} = message) do
+    GenServer.call(runner, {:stream_run, message}, :infinity)
+  end
+
+  @doc """
   Returns the orchestration history from the last run.
   """
   @spec get_history(GenServer.server()) :: [Agora.Orchestrator.turn()]
@@ -329,6 +349,90 @@ defmodule Agora.Orchestrator.Runner do
     {:reply, Error.wrap(:config_error, "Runner is busy (status: #{status})"), state}
   end
 
+  def handle_call(
+        {:stream_run, %Message{} = input},
+        {caller_pid, _tag},
+        %{status: :idle} = state
+      ) do
+    telemetry_meta = telemetry_metadata(state)
+
+    :telemetry.execute(
+      [:agora, :orchestrator, :run, :start],
+      %{system_time: System.system_time()},
+      telemetry_meta
+    )
+
+    start_time = System.monotonic_time()
+
+    # D10: Re-initialize orchestrator state per run
+    orch_config = build_orch_config(state.agents, state.orchestrator_opts)
+
+    case safe_orchestrator_init(state.orchestrator, orch_config) do
+      {:ok, orch_state} ->
+        stream_ref = make_ref()
+        runner_pid = self()
+
+        emit_fn = fn event ->
+          send(caller_pid, {Agora.Stream, stream_ref, event})
+        end
+
+        # State for the task — emit_fn set so orchestration_loop relays events
+        task_state = %{
+          state
+          | status: :streaming,
+            orchestrator_state: orch_state,
+            history: [],
+            emit_fn: emit_fn
+        }
+
+        {:ok, task_pid} =
+          Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
+            streaming_orchestration_run(
+              input,
+              task_state,
+              caller_pid,
+              stream_ref,
+              runner_pid,
+              start_time
+            )
+          end)
+
+        monitor_ref = Process.monitor(task_pid)
+
+        stream_info = %{
+          ref: stream_ref,
+          task_pid: task_pid,
+          monitor_ref: monitor_ref,
+          start_time: start_time
+        }
+
+        stream =
+          Agora.Stream.new(stream_ref, task_pid, caller_pid, error_fn: &ModeEvent.error/1)
+
+        {:reply, {:ok, stream},
+         %{
+           state
+           | status: :streaming,
+             orchestrator_state: orch_state,
+             history: [],
+             stream_info: stream_info
+         }}
+
+      {:error, error} ->
+        :telemetry.execute(
+          [:agora, :orchestrator, :run, :stop],
+          %{duration: System.monotonic_time() - start_time, steps: 0},
+          Map.merge(telemetry_meta, %{steps: 0, error: error})
+        )
+
+        {:reply, {:error, error}, state}
+    end
+  end
+
+  def handle_call({:stream_run, _}, _from, %{status: status} = state) do
+    {:reply, Error.wrap(:config_error, "Runner is busy (status: #{status})"), state}
+  end
+
   def handle_call(:get_history, _from, state) do
     {:reply, state.history, state}
   end
@@ -341,6 +445,57 @@ defmodule Agora.Orchestrator.Runner do
   def terminate(_reason, state) do
     stop_all_agents(state.agent_pids)
     :ok
+  end
+
+  @impl true
+  def handle_info(
+        {:stream_complete, ref, start_time, result, history},
+        %{stream_info: %{ref: ref}} = state
+      ) do
+    Process.demonitor(state.stream_info.monitor_ref, [:flush])
+    turns = length(history)
+    telemetry_meta = telemetry_metadata(state)
+
+    run_stop_meta =
+      case result do
+        {:ok, _} -> Map.put(telemetry_meta, :steps, turns)
+        {:error, error} -> telemetry_meta |> Map.put(:steps, turns) |> Map.put(:error, error)
+      end
+
+    :telemetry.execute(
+      [:agora, :orchestrator, :run, :stop],
+      %{duration: System.monotonic_time() - start_time, steps: turns},
+      run_stop_meta
+    )
+
+    {:noreply, %{state | status: :idle, history: history, stream_info: nil}}
+  end
+
+  def handle_info(
+        {:DOWN, mref, :process, pid, reason},
+        %{stream_info: %{monitor_ref: mref, task_pid: pid}} = state
+      ) do
+    telemetry_meta = telemetry_metadata(state)
+
+    :telemetry.execute(
+      [:agora, :orchestrator, :run, :stop],
+      %{
+        duration: System.monotonic_time() - state.stream_info.start_time,
+        steps: length(state.history)
+      },
+      Map.put(
+        telemetry_meta,
+        :error,
+        Error.new(:streaming_error, "Stream task crashed: #{inspect(reason)}")
+      )
+    )
+
+    {:noreply, %{state | status: :idle, stream_info: nil}}
+  end
+
+  # Ignore stray messages (other refs, other :DOWN, other :stream_complete)
+  def handle_info(_msg, state) do
+    {:noreply, state}
   end
 
   # --- Private: Safe wrappers ---
@@ -369,6 +524,46 @@ defmodule Agora.Orchestrator.Runner do
         )
 
       {{:error, error}, state}
+  end
+
+  defp streaming_orchestration_run(input, state, caller_pid, stream_ref, runner_pid, start_time) do
+    # Emit mode_started
+    emit_mode_event(state, :mode_started, input)
+
+    # Run the orchestration loop (emit_fn in state relays events to caller)
+    {result, final_state} = safe_orchestration_loop(input, state)
+    turns = length(final_state.history)
+
+    # Emit terminal mode event
+    case result do
+      {:ok, _} ->
+        emit_mode_event(final_state, :mode_completed, %{turns: turns})
+
+      {:error, %Error{type: :cancelled}} ->
+        # Already emitted in orchestration_loop
+        :ok
+
+      {:error, error} ->
+        emit_mode_event(final_state, :mode_failed, %{error: error, turns: turns})
+    end
+
+    # Terminal done signal to caller
+    send(caller_pid, {Agora.Stream, stream_ref, ModeEvent.done(state.telemetry_metadata)})
+
+    # Notify runner GenServer
+    send(runner_pid, {:stream_complete, stream_ref, start_time, result, final_state.history})
+  catch
+    kind, reason ->
+      error =
+        Error.new(
+          :streaming_error,
+          "Streaming orchestration crashed: #{format_crash(kind, reason)}",
+          %{kind: to_string(kind), reason: format_crash_reason(reason)}
+        )
+
+      send(caller_pid, {Agora.Stream, stream_ref, ModeEvent.error(error)})
+      send(caller_pid, {Agora.Stream, stream_ref, ModeEvent.done(state.telemetry_metadata)})
+      send(runner_pid, {:stream_complete, stream_ref, start_time, {:error, error}, state.history})
   end
 
   # --- Private: Orchestration loop ---

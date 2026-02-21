@@ -82,6 +82,26 @@ defmodule Agora.Execution do
   end
 
   @doc """
+  Starts a streaming orchestrator mode execution and returns an enumerable stream.
+
+  Starts a temporary Runner, begins streaming, and wraps the stream with cleanup
+  logic so the Runner is stopped when the stream is fully consumed, halted early,
+  or the caller process crashes.
+
+  Returns `{:ok, Enumerable.t()}` where each element is a `%ModeEvent{}`.
+  """
+  @spec run_mode_stream(atom(), String.t() | Message.t(), keyword()) ::
+          {:ok, Enumerable.t()} | {:error, Error.t()}
+  def run_mode_stream(mode, input, opts \\ [])
+
+  def run_mode_stream(mode, input, opts) do
+    with {:ok, orchestrator_mod} <- resolve_orchestrator(mode),
+         :ok <- validate_agents_present(opts) do
+      stream_orchestrator(orchestrator_mod, input, opts)
+    end
+  end
+
+  @doc """
   Executes a workflow mode.
 
   ## Mode-specific input shapes
@@ -200,6 +220,61 @@ defmodule Agora.Execution do
     end
   end
 
+  defp stream_orchestrator(orchestrator_mod, input, opts) do
+    opts = maybe_inject_context_policy_middleware(opts)
+    runner_opts = build_runner_opts(orchestrator_mod, opts)
+    caller = self()
+
+    case Agora.Orchestrator.RunnerSupervisor.start_runner(runner_opts) do
+      {:ok, pid} ->
+        case Agora.Orchestrator.Runner.stream_run(pid, input) do
+          {:ok, agora_stream} ->
+            stream_task_pid = agora_stream.pid
+
+            # Watcher: monitors caller + runner for crash cleanup
+            spawn(fn ->
+              caller_ref = Process.monitor(caller)
+              runner_ref = Process.monitor(pid)
+
+              receive do
+                {:DOWN, ^caller_ref, :process, ^caller, _reason} ->
+                  Process.exit(stream_task_pid, :shutdown)
+                  Agora.Orchestrator.RunnerSupervisor.stop_runner(pid)
+
+                {:DOWN, ^runner_ref, :process, ^pid, _reason} ->
+                  :ok
+              end
+            end)
+
+            wrapped =
+              Stream.transform(
+                agora_stream,
+                fn -> :ok end,
+                fn event, :ok -> {[event], :ok} end,
+                fn :ok ->
+                  Process.exit(stream_task_pid, :shutdown)
+                  Agora.Orchestrator.RunnerSupervisor.stop_runner(pid)
+                end
+              )
+
+            {:ok, wrapped}
+
+          {:error, _} = error ->
+            Agora.Orchestrator.RunnerSupervisor.stop_runner(pid)
+            error
+        end
+
+      {:error, %Error{} = error} ->
+        {:error, error}
+
+      {:error, reason} ->
+        Error.wrap(
+          :orchestration_error,
+          "Failed to start runner: #{inspect(reason)}"
+        )
+    end
+  end
+
   defp build_runner_opts(orchestrator_mod, opts) do
     base = [
       orchestrator: orchestrator_mod,
@@ -242,7 +317,19 @@ defmodule Agora.Execution do
       %ContextPolicy{} = policy ->
         compaction_mw = fn ctx, next ->
           if ctx.hook == :before_provider_call do
-            next.(%{ctx | messages: ContextPolicy.apply(policy, ctx.messages)})
+            before_count = length(ctx.messages)
+            compacted = ContextPolicy.apply(policy, ctx.messages)
+            after_count = length(compacted)
+
+            if after_count < before_count do
+              Agora.Telemetry.emit(
+                [:agora, :mode, :context_compacted],
+                %{system_time: System.system_time()},
+                %{strategy: policy.strategy, before: before_count, after: after_count}
+              )
+            end
+
+            next.(%{ctx | messages: compacted})
           else
             next.(ctx)
           end

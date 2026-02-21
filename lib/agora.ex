@@ -163,6 +163,32 @@ defmodule Agora do
   end
 
   @doc """
+  Starts a streaming mode execution and returns an enumerable of `ModeEvent`s.
+
+  Supports orchestrator modes (`:single`, `:round_robin`, `:group_chat`,
+  `:supervisor`, `:plan`, `:handoff`). The returned stream emits `ModeEvent`
+  structs providing visibility into agent selection, step progress, handoffs, etc.
+
+  The Runner is automatically cleaned up when the stream is fully consumed,
+  halted early, or if the caller process crashes.
+
+  ## Examples
+
+      {:ok, stream} = Agora.run_mode_stream(:single, "Hello",
+        agents: %{helper: config}
+      )
+
+      stream
+      |> Enum.each(fn event -> IO.inspect(event.type) end)
+
+  """
+  @spec run_mode_stream(atom(), String.t() | Message.t(), keyword()) ::
+          {:ok, Enumerable.t()} | {:error, Error.t()}
+  def run_mode_stream(mode, input, opts \\ []) do
+    Execution.run_mode_stream(mode, input, opts)
+  end
+
+  @doc """
   Unified mode-first execution entry point.
 
   For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`, `:handoff`):
