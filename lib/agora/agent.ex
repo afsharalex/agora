@@ -65,7 +65,7 @@ defmodule Agora.Agent do
   def start_link(opts) when is_list(opts) do
     {config, server_opts} = Keyword.pop!(opts, :config)
 
-    if Map.get(config, :lifecycle) do
+    if config.lifecycle do
       Agora.Agent.StateMachine.start_link(config, server_opts)
     else
       Agora.Agent.Server.start_link(config, server_opts)
@@ -156,7 +156,7 @@ defmodule Agora.Agent do
   def child_spec(opts) do
     config = Keyword.fetch!(opts, :config)
 
-    if Map.get(config, :lifecycle) do
+    if config.lifecycle do
       Agora.Agent.StateMachine.child_spec(opts)
     else
       Agora.Agent.Server.child_spec(opts)

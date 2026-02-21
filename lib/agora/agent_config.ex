@@ -16,6 +16,7 @@ defmodule Agora.AgentConfig do
     * `:max_iterations` - maximum reasoning loop iterations (default: `10`)
     * `:name` - human-readable agent name (default: `nil`)
     * `:provider_opts` - per-agent provider overrides (default: `[]`)
+    * `:lifecycle` - lifecycle state machine configuration (default: `nil`). When set, agent uses gen_statem backend.
 
   """
 
@@ -28,7 +29,8 @@ defmodule Agora.AgentConfig do
           middleware: list(),
           max_iterations: pos_integer(),
           name: String.t() | nil,
-          provider_opts: keyword()
+          provider_opts: keyword(),
+          lifecycle: Agora.Agent.Lifecycle.t() | nil
         }
 
   @derive Jason.Encoder
@@ -41,7 +43,8 @@ defmodule Agora.AgentConfig do
     memory: nil,
     middleware: [],
     max_iterations: 10,
-    provider_opts: []
+    provider_opts: [],
+    lifecycle: nil
   ]
 
   @schema [
@@ -90,6 +93,11 @@ defmodule Agora.AgentConfig do
       type: :keyword_list,
       default: [],
       doc: "Per-agent provider overrides (e.g. API key, base URL)"
+    ],
+    lifecycle: [
+      type: {:or, [{:struct, Agora.Agent.Lifecycle}, nil]},
+      default: nil,
+      doc: "Lifecycle state machine configuration. When set, agent uses gen_statem backend."
     ]
   ]
 
