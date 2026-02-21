@@ -764,6 +764,69 @@ defmodule Agora.Workflow.BuilderTest do
     end
   end
 
+  describe "build/2 skip_cycle_check option" do
+    test "default behavior unchanged — cycles still detected" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:b, :a)
+
+      assert {:error, error} = Builder.build(builder)
+      assert error.message =~ "cycle"
+    end
+
+    test "skip_cycle_check: true skips cycle validation" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:b, :a)
+
+      assert {:ok, workflow} = Builder.build(builder, skip_cycle_check: true)
+      assert map_size(workflow.steps) == 2
+    end
+
+    test "skip_cycle_check: false (explicit) still validates" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:b, :a)
+
+      assert {:error, error} = Builder.build(builder, skip_cycle_check: false)
+      assert error.message =~ "cycle"
+    end
+
+    test "build!/2 with skip_cycle_check: true succeeds" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:b, :a)
+
+      workflow = Builder.build!(builder, skip_cycle_check: true)
+      assert map_size(workflow.steps) == 2
+    end
+
+    test "build!/2 without skip raises on cycle" do
+      builder =
+        Builder.new()
+        |> Builder.step(:a, &handler/1)
+        |> Builder.step(:b, &handler/1)
+        |> Builder.edge(:a, :b)
+        |> Builder.edge(:b, :a)
+
+      assert_raise ArgumentError, ~r/cycle/, fn ->
+        Builder.build!(builder)
+      end
+    end
+  end
+
   describe ":input reserved ID" do
     test "step with id :input is rejected at build" do
       builder =

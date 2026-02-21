@@ -579,4 +579,56 @@ defmodule Agora.Workflow.DefinitionTest do
       assert w.steps[:b].retry == 1
     end
   end
+
+  # --- Section 22: Agora.run_workflow/2 module support ---
+
+  describe "Agora.run_workflow/2 with module" do
+    test "executes workflow from module atom" do
+      defmodule RunWorkflowModule do
+        use Agora.Workflow.Definition
+
+        step :a, run: fn _ -> {:ok, 42} end
+      end
+
+      {:ok, results} = Agora.run_workflow(RunWorkflowModule)
+      assert results[:a] == {:ok, 42}
+    end
+
+    test "returns error for non-existent module" do
+      assert {:error, error} = Agora.run_workflow(NonExistentModule.DoesNotExist)
+      assert error.type == :workflow_error
+      assert error.message =~ "could not be loaded"
+    end
+
+    test "returns error for module without __workflow__/0" do
+      assert {:error, error} = Agora.run_workflow(Enum)
+      assert error.type == :workflow_error
+      assert error.message =~ "does not define __workflow__/0"
+    end
+
+    test "passes opts through to executor" do
+      defmodule RunWorkflowOptsModule do
+        use Agora.Workflow.Definition
+
+        step :a, run: fn _ -> {:ok, 1} end
+        step :b, after: :a, run: fn _ -> {:error, Agora.Error.new(:workflow_error, "fail")} end
+      end
+
+      # With on_failure: :skip, the workflow should still succeed
+      {:ok, results} = Agora.run_workflow(RunWorkflowOptsModule, on_failure: :skip)
+      assert results[:a] == {:ok, 1}
+    end
+
+    test "existing struct form still works" do
+      defmodule StructFormModule do
+        use Agora.Workflow.Definition
+
+        step :a, run: fn _ -> {:ok, "struct"} end
+      end
+
+      w = StructFormModule.__workflow__()
+      {:ok, results} = Agora.run_workflow(w)
+      assert results[:a] == {:ok, "struct"}
+    end
+  end
 end

@@ -165,11 +165,48 @@ defmodule Agora do
   @doc """
   Executes a workflow DAG.
 
+  Accepts a `%Agora.Workflow{}` struct or a module atom that uses
+  `Agora.Workflow.Definition` (has a `__workflow__/0` function).
+
   See `Agora.Workflow.Executor.run/2` for options.
+
+  ## Examples
+
+      # With a workflow struct
+      {:ok, results} = Agora.run_workflow(workflow)
+
+      # With a workflow module
+      {:ok, results} = Agora.run_workflow(MyApp.Workflows.ETL)
+
   """
-  @spec run_workflow(Agora.Workflow.t(), keyword()) ::
+  @spec run_workflow(Agora.Workflow.t() | module(), keyword()) ::
           {:ok, map()} | {:error, Agora.Error.t()}
-  def run_workflow(%Agora.Workflow{} = workflow, opts \\ []) do
+  def run_workflow(workflow_or_module, opts \\ [])
+
+  def run_workflow(%Agora.Workflow{} = workflow, opts) do
     Agora.Workflow.Executor.run(workflow, opts)
+  end
+
+  def run_workflow(module, opts) when is_atom(module) do
+    case Code.ensure_loaded(module) do
+      {:module, ^module} ->
+        if function_exported?(module, :__workflow__, 0) do
+          Agora.Workflow.Executor.run(module.__workflow__(), opts)
+        else
+          {:error,
+           Error.new(
+             :workflow_error,
+             "Module #{inspect(module)} does not define __workflow__/0. " <>
+               "Did you `use Agora.Workflow.Definition`?"
+           )}
+        end
+
+      {:error, reason} ->
+        {:error,
+         Error.new(
+           :workflow_error,
+           "Module #{inspect(module)} could not be loaded: #{inspect(reason)}"
+         )}
+    end
   end
 end
