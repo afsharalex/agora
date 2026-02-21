@@ -248,17 +248,39 @@ orchestrator_opts: [
 ]
 ```
 
-### Mode Selection Guide
+## Mode Selection Guide
 
-| Use Case | Mode |
-|----------|------|
-| ETL pipeline, sequential processing | `:sequential` |
-| Independent parallel tasks with merge | `:parallel` |
-| Input-dependent routing | `:conditional` |
-| Complex DAG with mixed topologies | `:dag` |
-| LLM-driven multi-agent coordination | Orchestrator modes |
-| Autonomous plan-execute-review cycle | `:plan` |
-| Peer-to-peer agent routing / triage | `:handoff` |
+### Quick Decision Tree
+
+1. **Is the execution path deterministic?** (no LLM decides routing)
+   - Yes → workflow modes (`:sequential`, `:conditional`, `:parallel`, `:dag`)
+2. **Does an LLM need to coordinate agents?**
+   - Yes → orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`, `:handoff`)
+
+### Mode Comparison Matrix
+
+| Mode | Category | When to Use | Key Assumption | Failure Mode | Telemetry Events |
+|------|----------|-------------|----------------|-------------|------------------|
+| `:single` | Orchestrator | One agent, one turn via `run_mode` | Single agent suffices | Agent error propagates | `orchestrator:run`, `orchestrator:step` |
+| `:round_robin` | Orchestrator | Agents iterate on each other's output | Fixed agent order is useful | Termination condition or max turns | `orchestrator:run`, `orchestrator:step` |
+| `:group_chat` | Orchestrator | Agents deliberate on shared transcript | All agents need full context | Context window growth | `orchestrator:run`, `orchestrator:step` |
+| `:supervisor` | Orchestrator | Manager delegates to specialists | Model can emit `DELEGATE:name:msg` | Invalid delegation target | `orchestrator:run`, `orchestrator:step` |
+| `:plan` | Orchestrator | Autonomous plan-execute-review | Planner emits `PLAN`/`REVIEW` | Plan parse failure, replan limit | `orchestrator:run`, `orchestrator:step` |
+| `:handoff` | Orchestrator | Peer-to-peer routing / triage | Agents emit handoff directives | Self-handoff, hop limit | `orchestrator:run`, `orchestrator:step` |
+| `:sequential` | Workflow | ETL pipeline, ordered steps | Steps are pure functions | Step error aborts (or skips) | `workflow:run`, `workflow:step` |
+| `:conditional` | Workflow | Input-dependent routing | Router classifies correctly | Unmatched branches skipped | `workflow:run`, `workflow:step` |
+| `:parallel` | Workflow | Independent tasks, optional merge | Steps don't share state | Any branch failure propagates | `workflow:run`, `workflow:step` |
+| `:dag` | Workflow | Complex topology, mixed patterns | DAG is acyclic and valid | Step/timeout/checkpoint errors | `workflow:run`, `workflow:step` |
+
+### Workflow vs Orchestrator
+
+If both seem viable, choose based on:
+
+- **Predictability**: Workflows execute a fixed graph. Orchestrators let the LLM decide routing at runtime.
+- **Cost**: Workflow function steps make zero LLM calls. Orchestrator modes require at least one LLM call per turn.
+- **Debugging**: Workflow step results are deterministic given the same input. Orchestrator traces vary by model output.
+
+Use `:dag` when you need workflow features (retry, checkpoints, parallel execution) with a complex topology. Use `:plan` when the task decomposition itself requires LLM reasoning.
 
 ## Handoff Mode
 
@@ -551,3 +573,42 @@ end
 # Detach when done (idempotent)
 Agora.Telemetry.EventBusBridge.detach()
 ```
+
+## Examples Index
+
+### Canonical Mode Demos
+
+These examples demonstrate `run_mode/3` for each execution mode:
+
+| Example | Mode | Description |
+|---------|------|-------------|
+| `single_mode.exs` | `:single` | Simplest orchestrator mode |
+| `multi_agent.exs` | `:round_robin` | Agents iterate on shared topic |
+| `group_chat_mode.exs` | `:group_chat` | Shared transcript deliberation |
+| `supervisor_mode.exs` | `:supervisor` | Manager delegates to specialists |
+| `plan_mode.exs` | `:plan` | Autonomous plan-execute-review |
+| `handoff_mode.exs` | `:handoff` | Peer-to-peer triage routing |
+| `sequential_mode.exs` | `:sequential` | Linear ETL pipeline |
+| `conditional_mode.exs` | `:conditional` | Router with conditional branches |
+| `parallel_mode.exs` | `:parallel` | Fan-out/fan-in |
+| `dag_mode.exs` | `:dag` | Complex DAG topology |
+
+### Scenario Demos
+
+These examples demonstrate specific features using lower-level APIs:
+
+| Example | Focus |
+|---------|-------|
+| `simple_chat.exs` | One-shot agent with `Agora.run/2` |
+| `streaming.exs` | Token streaming with `Agora.stream/2` |
+| `tool_use.exs` | Agent with Calculator tool |
+| `workflow.exs` | Builder API with `Agora.run_workflow/2` |
+| `workflow_dsl.exs` | Block DSL for inline workflows |
+| `workflow_module.exs` | Module DSL for reusable workflows |
+| `customer_support.exs` | Agent lifecycle with state machine |
+| `order_processing.exs` | Multi-step agent with tools |
+
+## See Also
+
+- [Orchestration](orchestration.md) -- Custom orchestrator implementation, termination conditions, direct Runner lifecycle
+- [Workflows](workflows.md) -- Builder API, Block/Module DSLs, checkpoint persistence, agent-powered steps

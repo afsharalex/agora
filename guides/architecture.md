@@ -60,7 +60,11 @@ User → Agent.stream_run/2 → streaming loop:
 ## Module Organization
 
 ### Core
-- `Agora` -- Top-level convenience API (`run/2`, `stream/2`, `start_agent/1`, `run_workflow/1`)
+- `Agora` -- Top-level convenience API (`run/2`, `stream/2`, `run_mode/3`, `run_workflow/1`)
+- `Agora.Execution` -- Unified mode-first execution facade for orchestrators and workflows
+- `Agora.ModeEvent` -- Typed event struct for streaming execution progress
+- `Agora.CancelToken` -- Lock-free boundary-cooperative cancellation
+- `Agora.ContextPolicy` -- Message compaction strategies for bounded context growth
 - `Agora.Agent` -- Multi-backend agent facade (dispatches to Server or StateMachine)
 - `Agora.Agent.Lifecycle` -- State machine lifecycle configuration (states, transitions, callbacks)
 - `Agora.AgentConfig` -- NimbleOptions-validated configuration (`:lifecycle` field selects backend)

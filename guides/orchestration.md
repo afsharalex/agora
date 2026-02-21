@@ -1,26 +1,29 @@
 # Orchestration
 
-How to coordinate multiple agents using orchestrators and termination conditions.
-
-## Overview
-
-Orchestrators control **which** agent runs and **what input** it receives, without modifying how agents work internally. The `Agora.Orchestrator.Runner` GenServer drives the orchestration loop.
+> **Recommended entry point:** For the unified `run_mode/3` API covering all orchestrator modes
+> (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`, `:handoff`),
+> see [Execution Modes](execution-modes.md). This guide covers advanced topics: custom
+> orchestrator implementation, termination conditions, and direct Runner lifecycle management.
 
 ## Built-in Orchestrators
 
-| Orchestrator | Description |
-|-------------|-------------|
-| `Agora.Orchestrator.Single` | Runs one agent to completion |
-| `Agora.Orchestrator.RoundRobin` | Cycles through agents, each receives previous response |
-| `Agora.Orchestrator.Supervisor` | One agent delegates to workers via `DELEGATE:name:message` |
-| `Agora.Orchestrator.ChatRoom` | Shared transcript -- all agents see the full conversation |
+| Orchestrator | Mode Atom | Description |
+|-------------|-----------|-------------|
+| `Agora.Orchestrator.Single` | `:single` | Runs one agent to completion |
+| `Agora.Orchestrator.RoundRobin` | `:round_robin` | Cycles through agents, each receives previous response |
+| `Agora.Orchestrator.Supervisor` | `:supervisor` | One agent delegates to workers via `DELEGATE:name:message` |
+| `Agora.Orchestrator.ChatRoom` | `:group_chat` | Shared transcript -- all agents see the full conversation |
+| `Agora.Orchestrator.Plan` | `:plan` | Autonomous plan-execute-review cycle |
+| `Agora.Orchestrator.Handoff` | `:handoff` | Decentralized baton-passing between agents |
+
+`Agora.Orchestrator.GroupChat` is an alias for `ChatRoom`.
 
 ## RoundRobin Example
 
-Agents take turns, each receiving the previous agent's response:
+Using the recommended `run_mode/3` API:
 
 ```elixir
-alias Agora.{AgentConfig, Orchestrator.Runner, Orchestrator.TerminationCondition}
+alias Agora.{AgentConfig, Orchestrator.TerminationCondition}
 
 agents = %{
   researcher: AgentConfig.new!(
@@ -33,6 +36,17 @@ agents = %{
   )
 }
 
+{:ok, response} = Agora.run_mode(:round_robin, "Research and write about BEAM concurrency",
+  agents: agents,
+  termination: TerminationCondition.keyword_match(["FINAL ANSWER"])
+)
+```
+
+The Runner API below is available for advanced use cases requiring direct lifecycle management:
+
+```elixir
+alias Agora.Orchestrator.Runner
+
 {:ok, runner} = Runner.start_link(
   orchestrator: Agora.Orchestrator.RoundRobin,
   agents: agents,
@@ -40,6 +54,7 @@ agents = %{
 )
 
 {:ok, response} = Runner.run(runner, "Research and write about BEAM concurrency")
+Agora.stop_runner(runner)
 ```
 
 ## Supervisor Delegation
@@ -106,21 +121,6 @@ TerminationCondition.any_of([
   TerminationCondition.max_turns(10),
   TerminationCondition.keyword_match(["DONE"])
 ])
-```
-
-## Convenience Functions
-
-```elixir
-# Start a runner under the built-in supervisor
-{:ok, runner} = Agora.start_runner(
-  orchestrator: Agora.Orchestrator.RoundRobin,
-  agents: agents,
-  termination: TerminationCondition.max_turns(5)
-)
-
-# Run and stop
-{:ok, response} = Agora.Orchestrator.Runner.run(runner, "Hello")
-Agora.stop_runner(runner)
 ```
 
 ## Implement a Custom Orchestrator

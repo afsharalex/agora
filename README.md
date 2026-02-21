@@ -33,7 +33,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Agents ar
 - **BEAM-native** -- Agents as supervised processes, tool execution via `Task.Supervisor`, per-run supervision trees
 - **Middleware system** -- Composable interceptors for logging, token budgets, timeouts, approval gates, and custom behavior
 - **Memory backends** -- Bound conversation growth with ring buffers or persist history to disk across restarts
-- **Orchestration patterns** -- Single, round-robin, supervisor delegation, and chat-room multi-agent coordination
+- **Orchestration patterns** -- Single, round-robin, supervisor delegation, chat-room, plan-execute-review, and handoff multi-agent coordination
 - **Streaming** -- Real-time token streaming with `stream_run/2`, composable `Enumerable` stream, multi-turn tool execution
 - **Observability** -- Telemetry events for providers, tools, middleware, and agents; Registry-backed EventBus for pub/sub
 
@@ -427,14 +427,13 @@ Agent.clear_memory(pid)  # removes all persisted messages
 
 ## Orchestration
 
-Orchestrators coordinate multiple agents without modifying how agents work internally.
+Orchestrators coordinate multiple agents without modifying how agents work internally. Use `run_mode/3` as the primary entry point:
 
 ### Multi-agent coordination
 
 ```elixir
-alias Agora.{AgentConfig, Orchestrator.Runner, Orchestrator.TerminationCondition}
+alias Agora.{AgentConfig, Orchestrator.TerminationCondition}
 
-# Define agent configs
 agents = %{
   researcher: AgentConfig.new!(
     provider: :anthropic, model: "claude-sonnet-4-20250514",
@@ -446,7 +445,17 @@ agents = %{
   )
 }
 
-# Round-robin: agents take turns, each receiving the previous response
+{:ok, response} = Agora.run_mode(:round_robin, "Research and write about BEAM concurrency",
+  agents: agents,
+  termination: TerminationCondition.keyword_match(["FINAL ANSWER"])
+)
+```
+
+For direct lifecycle management, the Runner API is also available:
+
+```elixir
+alias Agora.Orchestrator.Runner
+
 {:ok, pid} = Runner.start_link(
   orchestrator: Agora.Orchestrator.RoundRobin,
   agents: agents,
@@ -454,16 +463,21 @@ agents = %{
 )
 
 {:ok, response} = Runner.run(pid, "Research and write about BEAM concurrency")
+Agora.stop_runner(pid)
 ```
 
 ### Built-in orchestrators
 
-| Orchestrator | Description |
-|-------------|-------------|
-| `Agora.Orchestrator.Single` | Runs one agent to completion (baseline) |
-| `Agora.Orchestrator.RoundRobin` | Cycles through agents, each receives previous response |
-| `Agora.Orchestrator.Supervisor` | One agent delegates to workers via `DELEGATE:name:message` |
-| `Agora.Orchestrator.ChatRoom` | Shared transcript — all agents see the full conversation |
+| Orchestrator | Mode | Description |
+|-------------|------|-------------|
+| `Agora.Orchestrator.Single` | `:single` | Runs one agent to completion |
+| `Agora.Orchestrator.RoundRobin` | `:round_robin` | Cycles through agents, each receives previous response |
+| `Agora.Orchestrator.Supervisor` | `:supervisor` | One agent delegates to workers via `DELEGATE:name:message` |
+| `Agora.Orchestrator.ChatRoom` | `:group_chat` | Shared transcript — all agents see the full conversation |
+| `Agora.Orchestrator.Plan` | `:plan` | Autonomous plan-execute-review cycle |
+| `Agora.Orchestrator.Handoff` | `:handoff` | Decentralized baton-passing between agents |
+
+For the full mode taxonomy, streaming, cancellation, and context compaction, see the [Execution Modes](guides/execution-modes.md) guide.
 
 ### Termination conditions
 
@@ -479,14 +493,23 @@ condition = TerminationCondition.any_of([
 
 ## Workflows
 
-Workflows define deterministic DAG-based pipelines where execution order is predetermined. Unlike orchestrators (LLM-driven routing), workflows follow predefined step dependencies with parallel fan-out, conditional branching, retry, and checkpoint-based resumability.
+Workflows define deterministic pipelines where execution order is predetermined. Use `run_mode/3` for common patterns, or the Builder API for complex DAGs.
 
-### Build and run a workflow
+### Sequential pipeline
+
+```elixir
+{:ok, results} = Agora.run_mode(:sequential, [
+  {:fetch, fn _r -> {:ok, fetch_data()} end},
+  {:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end},
+  {:save, fn r -> {:ok, save(elem(r[:transform], 1))} end}
+])
+```
+
+### Build and run a DAG workflow
 
 ```elixir
 alias Agora.Workflow.Builder
 
-# Linear pipeline with chain/2
 workflow =
   Builder.new(step_defaults: [retry: 1])
   |> Builder.chain([
@@ -497,15 +520,9 @@ workflow =
   |> Builder.build!()
 
 {:ok, results} = Agora.run_workflow(workflow, input: "source")
-
-# Or use after: for dependency declaration
-workflow =
-  Builder.new()
-  |> Builder.step(:fetch, fn _r -> {:ok, fetch_data()} end)
-  |> Builder.step(:transform, fn r -> {:ok, transform(elem(r[:fetch], 1))} end, after: :fetch)
-  |> Builder.step(:save, fn r -> {:ok, save(elem(r[:transform], 1))} end, after: :transform)
-  |> Builder.build!()
 ```
+
+For the full workflow mode taxonomy and streaming, see the [Execution Modes](guides/execution-modes.md) guide.
 
 ### Parallel fan-out/fan-in
 
@@ -592,12 +609,16 @@ Agora emits telemetry events at key instrumentation points via the `:telemetry` 
 | `[:agora, :workflow, :step]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
 | `[:agora, :provider, :stream]` | `:start`, `:stop` | `Agora.Provider` |
 | `[:agora, :agent, :stream_run]` | `:start`, `:stop` | `Agora.Agent` |
+| `[:agora, :mode, :event]` | (single event) | `Agora.Execution` |
+| `[:agora, :mode, :context_compacted]` | (single event) | `Agora.Execution` / `Agora.Workflow.Executor` |
 
 See `Agora.Telemetry` moduledoc for full measurement and metadata details per event.
 
 ### EventBus
 
-A lightweight Registry-backed pub/sub for internal component messaging, UI integration, and debugging:
+A lightweight Registry-backed pub/sub for internal component messaging, UI integration, and debugging.
+
+`Agora.Telemetry.EventBusBridge` can forward mode-level telemetry events to the EventBus for pub/sub consumption:
 
 ```elixir
 Agora.EventBus.subscribe(:agent_events)
@@ -640,6 +661,10 @@ User → Agent.stream_run/2 → streaming loop:
 | `Agora.Agent` | GenServer with reasoning loop (provider call → tool execution → repeat) |
 | `Agora.Agent.Supervisor` | DynamicSupervisor for agent lifecycle management |
 | `Agora.AgentConfig` | NimbleOptions-validated configuration |
+| `Agora.Execution` | Unified mode-first execution facade (`run_mode/3`, `run_mode_stream/3`) |
+| `Agora.ModeEvent` | Typed streaming event struct for execution progress |
+| `Agora.CancelToken` | Lock-free boundary-cooperative cancellation |
+| `Agora.ContextPolicy` | Message compaction strategies for bounded context growth |
 | `Agora.Provider` | Behaviour + resolution (`resolve/1` maps atoms to modules) |
 | `Agora.Message` | Universal message struct (role, content, tool_calls, tool_results, metadata) |
 | `Agora.Error` | Typed errors: `:provider_error`, `:auth_error`, `:rate_limit`, `:timeout`, etc. |

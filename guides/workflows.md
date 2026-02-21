@@ -1,12 +1,17 @@
 # Workflows
 
-How to build deterministic DAG-based pipelines with parallel execution, conditional branching, and checkpoints.
+> **Recommended entry point:** For the unified `run_mode/3` API covering workflow modes
+> (`:sequential`, `:conditional`, `:parallel`, `:dag`), see [Execution Modes](execution-modes.md).
+> This guide covers advanced topics: Builder API, Block/Module DSLs, checkpoint persistence,
+> agent-powered steps, and step options.
 
 ## Overview
 
 Workflows define deterministic pipelines where execution order is predetermined. Unlike orchestrators (LLM-driven routing), workflows follow predefined step dependencies with parallel fan-out, conditional branching, retry, and checkpoint-based resumability.
 
 ## Build a Linear Workflow
+
+For the simpler `run_mode(:sequential, ...)` API, see [Execution Modes](execution-modes.md#sequential--linear-chain).
 
 ```elixir
 alias Agora.Workflow.Builder

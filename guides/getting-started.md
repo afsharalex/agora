@@ -133,6 +133,7 @@ config = Agora.AgentConfig.new!(
 - [Providers](providers.md) -- Configure Anthropic, OpenAI, or build a custom provider
 - [Tools](tools.md) -- Create custom tools for your agents
 - [Middleware](middleware.md) -- Add logging, timeouts, and token budgets
-- [Orchestration](orchestration.md) -- Coordinate multiple agents
-- [Workflows](workflows.md) -- Build deterministic DAG pipelines
+- [Execution Modes](execution-modes.md) -- Unified `run_mode/3` API for orchestration and workflows
+- [Orchestration](orchestration.md) -- Custom orchestrators and termination conditions
+- [Workflows](workflows.md) -- Builder API, DSLs, and checkpoint persistence
 - [Architecture](architecture.md) -- Understand Agora's design
