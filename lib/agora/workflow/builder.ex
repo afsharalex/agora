@@ -439,16 +439,23 @@ defmodule Agora.Workflow.Builder do
   4. No cycles (Kahn's algorithm)
 
   Returns `{:ok, %Workflow{}}` or `{:error, %Error{}}`.
+
+  ## Options
+
+    * `:skip_cycle_check` — when `true`, skips cycle validation. Used by
+      `Agora.Workflow.Definition` when compile-time validation has already
+      performed enhanced (conditional-aware) cycle detection. Default: `false`.
+
   """
-  @spec build(t()) :: {:ok, Workflow.t()} | {:error, Error.t()}
-  def build(%__MODULE__{} = builder) do
+  @spec build(t(), keyword()) :: {:ok, Workflow.t()} | {:error, Error.t()}
+  def build(%__MODULE__{} = builder, opts \\ []) do
     with :ok <- check_errors(builder) do
       builder = merge_input_edges(builder)
 
       with :ok <- check_errors(builder),
            :ok <- validate_edge_endpoints(builder),
            :ok <- validate_input_refs(builder),
-           :ok <- validate_no_cycles(builder) do
+           :ok <- maybe_validate_cycles(builder, opts) do
         {:ok,
          %Workflow{
            steps: builder.steps,
@@ -465,12 +472,20 @@ defmodule Agora.Workflow.Builder do
     Error.wrap(:workflow_error, "Builder errors: #{Enum.join(messages, "; ")}")
   end
 
+  defp maybe_validate_cycles(builder, opts) do
+    if Keyword.get(opts, :skip_cycle_check, false),
+      do: :ok,
+      else: validate_no_cycles(builder)
+  end
+
   @doc """
   Validates and returns a `%Workflow{}`, raising on failure.
+
+  Accepts the same options as `build/2`.
   """
-  @spec build!(t()) :: Workflow.t()
-  def build!(%__MODULE__{} = builder) do
-    case build(builder) do
+  @spec build!(t(), keyword()) :: Workflow.t()
+  def build!(%__MODULE__{} = builder, opts \\ []) do
+    case build(builder, opts) do
       {:ok, workflow} -> workflow
       {:error, error} -> raise ArgumentError, to_string(error)
     end
