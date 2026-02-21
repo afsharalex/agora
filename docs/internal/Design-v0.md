@@ -225,7 +225,6 @@ Internal messaging between components.
 ⸻
 
 Non-Goals (for initial version)
-	•	No user-defined OTP state machines
 	•	No explicit “strategy/decider” API
 	•	No heavy DSL requirements
 	•	Avoid over-engineered agent abstractions early

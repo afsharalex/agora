@@ -21,8 +21,8 @@ graph TD
   App --> StreamSup[StreamSupervisor]
   App --> WorkflowSup[WorkflowTaskSupervisor]
   App --> EventBus[EventBus.Registry]
-  AgentSup --> Agent1[Agent GenServer]
-  AgentSup --> Agent2[Agent GenServer]
+  AgentSup --> Agent1[Agent Server/StateMachine]
+  AgentSup --> Agent2[Agent Server/StateMachine]
   RunnerSup --> Runner1[Orchestrator.Runner]
 ```
 
@@ -61,8 +61,9 @@ User → Agent.stream_run/2 → streaming loop:
 
 ### Core
 - `Agora` -- Top-level convenience API (`run/2`, `stream/2`, `start_agent/1`, `run_workflow/1`)
-- `Agora.Agent` -- GenServer with reasoning loop
-- `Agora.AgentConfig` -- NimbleOptions-validated configuration
+- `Agora.Agent` -- Multi-backend agent facade (dispatches to Server or StateMachine)
+- `Agora.Agent.Lifecycle` -- State machine lifecycle configuration (states, transitions, callbacks)
+- `Agora.AgentConfig` -- NimbleOptions-validated configuration (`:lifecycle` field selects backend)
 - `Agora.Message` -- Universal message struct (role, content, tool_calls, tool_results, metadata)
 - `Agora.Error` -- 14 typed error categories
 

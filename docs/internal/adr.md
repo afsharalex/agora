@@ -42,6 +42,12 @@ Extracted from the original `TODO.md` roadmap after all 10 phases were completed
 | Timeout cooperative | Checks deadline at hook points only; no mid-flight interruption | Hard wall-clock enforcement requires Task wrapping — significantly more complex; cooperative catches multi-iteration accumulation |
 | Halt persistence | On halt, no new messages appended — `state.messages` unchanged | Clean rollback: halted iterations leave no trace in conversation history |
 | Tool call filter sync | If `before_tool_call` filters calls, assistant message reflects only approved calls | Prevents tool_calls/results divergence in conversation history |
+| Agent backend | Dual-backend: GenServer (default) + gen_statem (lifecycle) | Lifecycle-enabled agents need discrete states, transitions, and timeouts — gen_statem provides these natively. Backend selected at startup via `config.lifecycle` |
+| Lifecycle config overlay | `nil`-means-inherit from base AgentConfig | Each state overrides only the fields it specifies; simple, no list-merge semantics needed |
+| Transition evaluation | Against RunResult.facts (full run history) | Final assistant message after loop completion has no tool calls; triggers like `{:tool_call, name}` must check what happened during the run |
+| FSM state on restart | Resets to `initial_state` | Messages persist via memory; FSM state is runtime-only. Safe default — avoids persisting potentially invalid state |
+| System messages in StateMachine | Never in `data.messages` | State-specific instructions live in `resolved_config.instructions`; prevents stale prompt drift on state transitions |
+| Transition precedence | Ordered list, first-match | Simple, predictable; matches gen_statem's event-priority model |
 
 ---
 
@@ -89,7 +95,12 @@ lib/agora/
 │   └── date_time.ex                   # Phase 2 (example)
 │
 ├── agent/
-│   ├── agent.ex                       # Phase 3 (GenServer)
+│   ├── agent.ex                       # Phase 3 (facade — dispatches to Server or StateMachine)
+│   ├── server.ex                      # Phase 3 (GenServer backend)
+│   ├── state_machine.ex               # gen_statem backend for lifecycle agents
+│   ├── lifecycle.ex                   # Lifecycle + StateConfig structs
+│   ├── loop.ex                        # Shared sync reasoning loop
+│   ├── stream_loop.ex                 # Shared streaming loop
 │   └── supervisor.ex                  # Phase 3
 │
 ├── middleware/

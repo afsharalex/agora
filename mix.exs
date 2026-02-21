@@ -81,6 +81,8 @@ defmodule Agora.MixProject do
         Core: [
           Agora,
           Agora.Agent,
+          Agora.Agent.Lifecycle,
+          Agora.Agent.Lifecycle.StateConfig,
           Agora.Agent.Supervisor,
           Agora.AgentConfig,
           Agora.Message,
