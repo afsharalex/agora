@@ -228,6 +228,7 @@ defmodule Agora.Workflow.Definition do
 
     * `:condition` — optional 1-arity function `(map() -> boolean())`
     * `:when` — alias for `:condition`
+    * `:optional` — boolean; when `true`, a `:skipped` predecessor is treated as `:not_required` instead of `:failed_dep`
 
   ## Examples
 
