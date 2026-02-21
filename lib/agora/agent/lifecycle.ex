@@ -89,6 +89,19 @@ defmodule Agora.Agent.Lifecycle do
   defstruct [:initial_state, states: %{}, transitions: [], on_enter: %{}, on_exit: %{}]
 
   @doc """
+  Validates a lifecycle configuration, returning `{:ok, lifecycle}` or `{:error, reason}`.
+
+  Used by `StateMachine.init/1` to catch invalid structs that bypass `new!/1`.
+  """
+  @spec validate(t()) :: {:ok, t()} | {:error, String.t()}
+  def validate(%__MODULE__{} = lc) do
+    validate!(lc)
+    {:ok, lc}
+  rescue
+    e in ArgumentError -> {:error, Exception.message(e)}
+  end
+
+  @doc """
   Creates a validated lifecycle configuration, raising on invalid input.
 
   ## Validations
@@ -98,6 +111,7 @@ defmodule Agora.Agent.Lifecycle do
   - All transition `from` and `to` must reference defined states
   - At most one `{:state_timeout, _}` trigger per source state
   - All `on_enter`/`on_exit` keys must reference defined states
+  - Guard functions must be 1-arity
   """
   @spec new!(keyword()) :: t()
   def new!(opts) when is_list(opts) do
@@ -138,6 +152,7 @@ defmodule Agora.Agent.Lifecycle do
     Enum.reduce(transitions, timeout_counts, fn transition, counts ->
       validate_transition_states!(transition, state_names)
       validate_transition_trigger!(transition)
+      validate_transition_guard!(transition)
       track_timeout(transition, counts)
     end)
 
@@ -171,6 +186,14 @@ defmodule Agora.Agent.Lifecycle do
     raise ArgumentError, "invalid transition trigger: #{inspect(trigger)}"
   end
 
+  defp validate_transition_guard!(%{guard: nil}), do: :ok
+  defp validate_transition_guard!(%{guard: fun}) when is_function(fun, 1), do: :ok
+
+  defp validate_transition_guard!(%{guard: guard}) do
+    raise ArgumentError,
+          "transition :guard must be nil or a 1-arity function, got: #{inspect(guard)}"
+  end
+
   defp track_timeout(%{trigger: {:state_timeout, _}, from: from}, counts) do
     new_count = Map.get(counts, from, 0) + 1
 
@@ -187,17 +210,27 @@ defmodule Agora.Agent.Lifecycle do
   defp validate_callbacks!(%{on_enter: on_enter, on_exit: on_exit, states: states}) do
     state_names = Map.keys(states)
 
-    for {state, _} <- on_enter do
+    for {state, fun} <- on_enter do
       unless state in state_names do
         raise ArgumentError,
               "on_enter callback for #{inspect(state)} not found in states: #{inspect(state_names)}"
       end
+
+      unless is_function(fun, 2) do
+        raise ArgumentError,
+              "on_enter callback for #{inspect(state)} must be a 2-arity function, got: #{inspect(fun)}"
+      end
     end
 
-    for {state, _} <- on_exit do
+    for {state, fun} <- on_exit do
       unless state in state_names do
         raise ArgumentError,
               "on_exit callback for #{inspect(state)} not found in states: #{inspect(state_names)}"
+      end
+
+      unless is_function(fun, 2) do
+        raise ArgumentError,
+              "on_exit callback for #{inspect(state)} must be a 2-arity function, got: #{inspect(fun)}"
       end
     end
   end

@@ -724,6 +724,110 @@ defmodule Agora.Agent.StateMachineTest do
     end
   end
 
+  describe "lifecycle validation in init" do
+    test "rejects invalid lifecycle struct that bypasses new!/1" do
+      # Manually build an invalid lifecycle (initial_state not in states)
+      invalid_lifecycle = %Lifecycle{
+        initial_state: :missing,
+        states: %{ready: %StateConfig{}}
+      }
+
+      config = %{AgentConfig.new!(provider: :echo, model: "echo") | lifecycle: invalid_lifecycle}
+
+      # gen_statem.start_link sends EXIT to caller on init failure; trap exits to get error tuple
+      Process.flag(:trap_exit, true)
+
+      assert {:error, error} = Agent.start_link(config: config)
+      assert error.type == :config_error
+      assert error.message =~ "Invalid lifecycle"
+    after
+      Process.flag(:trap_exit, false)
+    end
+  end
+
+  describe "callback crash safety" do
+    test "on_enter crash does not take down the process" do
+      config =
+        lifecycle_config(
+          initial_state: :a,
+          states: %{a: %StateConfig{}, b: %StateConfig{}},
+          transitions: [
+            %{
+              from: :a,
+              to: :b,
+              trigger:
+                {:message_match,
+                 fn msg -> msg.content && String.contains?(msg.content, "Echo:") end},
+              guard: nil
+            }
+          ],
+          on_enter: %{
+            a: fn _from, _to -> :ok end,
+            b: fn _from, _to -> raise "on_enter crash!" end
+          }
+        )
+
+      pid = start_agent(config)
+      {:ok, _} = Agent.run(pid, "trigger")
+
+      # Agent should survive the callback crash and land in state :b
+      assert {:ok, :b} = Agent.get_lifecycle_state(pid)
+      assert Process.alive?(pid)
+    end
+
+    test "on_exit crash does not take down the process" do
+      config =
+        lifecycle_config(
+          initial_state: :a,
+          states: %{a: %StateConfig{}, b: %StateConfig{}},
+          transitions: [
+            %{
+              from: :a,
+              to: :b,
+              trigger:
+                {:message_match,
+                 fn msg -> msg.content && String.contains?(msg.content, "Echo:") end},
+              guard: nil
+            }
+          ],
+          on_exit: %{
+            a: fn _from, _to -> raise "on_exit crash!" end
+          }
+        )
+
+      pid = start_agent(config)
+      {:ok, _} = Agent.run(pid, "trigger")
+
+      assert {:ok, :b} = Agent.get_lifecycle_state(pid)
+      assert Process.alive?(pid)
+    end
+
+    test "guard crash returns false (skips transition)" do
+      config =
+        lifecycle_config(
+          initial_state: :active,
+          states: %{active: %StateConfig{}, done: %StateConfig{}},
+          transitions: [
+            %{
+              from: :active,
+              to: :done,
+              trigger:
+                {:message_match,
+                 fn msg -> msg.content && String.contains?(msg.content, "Echo:") end},
+              guard: fn _ctx -> raise "guard crash!" end
+            }
+          ]
+        )
+
+      pid = start_agent(config)
+      {:ok, _} = Agent.run(pid, "test")
+
+      # Guard crash => treated as false => no transition
+      assert {:ok, :active} = Agent.get_lifecycle_state(pid)
+      assert Process.alive?(pid)
+    end
+  end
+
   describe "memory" do
     test "clear_memory clears messages" do
       config =

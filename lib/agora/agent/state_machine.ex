@@ -10,7 +10,7 @@ defmodule Agora.Agent.StateMachine do
   require Logger
 
   alias Agora.{AgentConfig, Error, Memory, Message, StreamEvent}
-  alias Agora.Agent.{Loop, StreamLoop}
+  alias Agora.Agent.{Lifecycle, Loop, StreamLoop}
   alias Agora.Agent.Lifecycle.StateConfig
 
   @messages_key :agora_agent_sm_messages
@@ -18,18 +18,22 @@ defmodule Agora.Agent.StateMachine do
 
   @spec start_link(AgentConfig.t(), keyword()) :: GenServer.on_start()
   def start_link(%AgentConfig{} = config, server_opts) do
-    case Keyword.get(server_opts, :name) do
+    {name, statem_opts} = Keyword.pop(server_opts, :name)
+    # Pass through supported gen_statem options (e.g., :spawn_opt, :hibernate_after)
+    opts = Keyword.take(statem_opts, [:spawn_opt, :hibernate_after])
+
+    case name do
       nil ->
-        :gen_statem.start_link(__MODULE__, config, [])
+        :gen_statem.start_link(__MODULE__, config, opts)
 
       name when is_atom(name) ->
-        :gen_statem.start_link({:local, name}, __MODULE__, config, [])
+        :gen_statem.start_link({:local, name}, __MODULE__, config, opts)
 
       {:global, _} = name ->
-        :gen_statem.start_link(name, __MODULE__, config, [])
+        :gen_statem.start_link(name, __MODULE__, config, opts)
 
       {:via, _, _} = name ->
-        :gen_statem.start_link(name, __MODULE__, config, [])
+        :gen_statem.start_link(name, __MODULE__, config, opts)
     end
   end
 
@@ -52,6 +56,14 @@ defmodule Agora.Agent.StateMachine do
   @impl true
   def init(%AgentConfig{} = config) do
     lifecycle = config.lifecycle
+
+    case Lifecycle.validate(lifecycle) do
+      {:ok, _} -> do_init(config, lifecycle)
+      {:error, reason} -> {:stop, Error.new(:config_error, "Invalid lifecycle: #{reason}")}
+    end
+  end
+
+  defp do_init(config, lifecycle) do
     initial_state = lifecycle.initial_state
     state_config = Map.get(lifecycle.states, initial_state, %StateConfig{})
     resolved = resolve_config(config, state_config)
@@ -86,9 +98,7 @@ defmodule Agora.Agent.StateMachine do
   def handle_event(:enter, old_state, new_state, data) do
     # Run on_exit for old state (skip on initial enter where old == new)
     if old_state != new_state do
-      if callback = Map.get(data.lifecycle.on_exit, old_state) do
-        callback.(old_state, new_state)
-      end
+      safe_lifecycle_callback(data.lifecycle.on_exit, old_state, old_state, new_state)
     end
 
     # Resolve config for new state
@@ -97,10 +107,8 @@ defmodule Agora.Agent.StateMachine do
     data = %{data | config: resolved}
 
     # Run on_enter for new state
-    if callback = Map.get(data.lifecycle.on_enter, new_state) do
-      from = if old_state == new_state, do: :__init__, else: old_state
-      callback.(from, new_state)
-    end
+    from = if old_state == new_state, do: :__init__, else: old_state
+    safe_lifecycle_callback(data.lifecycle.on_enter, new_state, from, new_state)
 
     actions = timeout_actions(new_state, data.lifecycle)
     {:keep_state, data, actions}
@@ -175,8 +183,9 @@ defmodule Agora.Agent.StateMachine do
       ) do
     {caller_pid, _tag} = from
     data = %{data | status: :streaming, iteration: 0, middleware_metadata: %{}}
-    old_messages = data.messages
     messages = data.messages ++ [message]
+    # Capture old_messages AFTER appending user input so derive_facts excludes it
+    old_messages = messages
     agent_ref = make_ref()
     agent_pid = self()
     telemetry_meta = telemetry_metadata(data.config)
@@ -252,6 +261,16 @@ defmodule Agora.Agent.StateMachine do
 
   # --- State timeout ---
 
+  def handle_event(:state_timeout, :timeout, state_name, %{status: :streaming} = _data) do
+    # Suppress state timeouts while streaming to prevent stale-state transitions.
+    # The stream completion handler will evaluate transitions against the current state.
+    Logger.debug(
+      "[Agora.Agent.StateMachine] Suppressed state_timeout in #{inspect(state_name)} during streaming"
+    )
+
+    :keep_state_and_data
+  end
+
   def handle_event(:state_timeout, :timeout, state_name, data) do
     case find_timeout_transition(state_name, data.lifecycle) do
       {:ok, target, trigger} ->
@@ -267,9 +286,9 @@ defmodule Agora.Agent.StateMachine do
 
   def handle_event(
         :info,
-        {:stream_complete, ref, start_time, run_state_name, old_messages,
+        {:stream_complete, ref, start_time, _run_state_name, old_messages,
          {:ok, final_messages, state_updates}},
-        _current_state,
+        current_state,
         %{stream_info: %{ref: ref}} = data
       ) do
     Process.demonitor(data.stream_info.monitor_ref, [:flush])
@@ -293,15 +312,15 @@ defmodule Agora.Agent.StateMachine do
       telemetry_meta
     )
 
-    # Derive facts from message delta and evaluate transitions
+    # Derive facts from message delta and evaluate transitions against current state
     facts = derive_facts(old_messages, final_messages)
 
     outcome =
       if facts.final_response, do: {:done, facts.final_response}, else: nil
 
-    case maybe_evaluate_stream_transitions(facts, outcome, run_state_name, data) do
+    case maybe_evaluate_stream_transitions(facts, outcome, current_state, data) do
       {:transition, target, trigger} ->
-        emit_transition_telemetry(run_state_name, target, trigger, data.config)
+        emit_transition_telemetry(current_state, target, trigger, data.config)
         {:next_state, target, data}
 
       :no_transition ->
@@ -460,7 +479,7 @@ defmodule Agora.Agent.StateMachine do
       if transition.from == state_name && trigger_matches?(transition.trigger, facts, outcome) do
         ctx = %{facts: facts, outcome: outcome, from: state_name, to: transition.to}
 
-        if transition.guard == nil || transition.guard.(ctx) do
+        if transition.guard == nil || safe_guard_call(transition.guard, ctx) do
           {:transition, transition.to, transition.trigger}
         end
       end
@@ -640,6 +659,40 @@ defmodule Agora.Agent.StateMachine do
         agent_name: config.name
       }
     )
+  end
+
+  # --- Private: Safe callback/guard wrappers ---
+
+  defp safe_lifecycle_callback(callbacks, state_key, from, to) do
+    case Map.get(callbacks, state_key) do
+      nil ->
+        :ok
+
+      callback ->
+        try do
+          callback.(from, to)
+        catch
+          kind, reason ->
+            Logger.warning(
+              "[Agora.Agent.StateMachine] Lifecycle callback for #{inspect(state_key)} crashed: " <>
+                format_crash(kind, reason)
+            )
+        end
+    end
+  end
+
+  defp safe_guard_call(guard, ctx) do
+    try do
+      guard.(ctx)
+    catch
+      kind, reason ->
+        Logger.warning(
+          "[Agora.Agent.StateMachine] Transition guard crashed: " <>
+            format_crash(kind, reason)
+        )
+
+        false
+    end
   end
 
   # --- Private: Crash formatting ---

@@ -3,7 +3,7 @@ defmodule Agora.Telemetry do
   Telemetry helpers and canonical event documentation for the Agora framework.
 
   This module provides thin wrappers around `:telemetry` functions and serves
-  as the single reference for all telemetry events emitted by Agora (28 events
+  as the single reference for all telemetry events emitted by Agora (29 events
   across 11 event prefixes).
 
   ## Event Reference
@@ -22,6 +22,10 @@ defmodule Agora.Telemetry do
   | `[:agora, :agent, :run, :exception]` | `%{duration}` | `%{provider, model, agent_name, max_iterations, kind, reason, stacktrace}` |
   | `[:agora, :agent, :loop_iteration, :start]` | `%{system_time}` | `%{provider, model, agent_name, max_iterations, iteration}` |
   | `[:agora, :agent, :loop_iteration, :stop]` | `%{duration}` | `%{provider, model, agent_name, max_iterations, iteration}` + optional `:has_tool_calls`, `:error` |
+  | `[:agora, :agent, :state_transition]` | `%{system_time}` | `%{from_state, to_state, trigger, provider, model, agent_name}` |
+
+  The `:state_transition` event is emitted by `Agora.Agent.StateMachine` when a lifecycle
+  agent transitions between states. The `:trigger` metadata is the inspected trigger term.
 
   ### Provider Events
 

@@ -201,6 +201,62 @@ defmodule Agora.Agent.LifecycleTest do
         )
       end
     end
+
+    test "raises when on_enter callback is not 2-arity" do
+      assert_raise ArgumentError, ~r/on_enter callback.*must be a 2-arity function/, fn ->
+        Lifecycle.new!(
+          initial_state: :a,
+          states: %{a: %StateConfig{}},
+          on_enter: %{a: fn _state -> :ok end}
+        )
+      end
+    end
+
+    test "raises when on_exit callback is not 2-arity" do
+      assert_raise ArgumentError, ~r/on_exit callback.*must be a 2-arity function/, fn ->
+        Lifecycle.new!(
+          initial_state: :a,
+          states: %{a: %StateConfig{}},
+          on_exit: %{a: "not a function"}
+        )
+      end
+    end
+
+    test "raises when guard is not nil or 1-arity function" do
+      assert_raise ArgumentError, ~r/guard must be nil or a 1-arity function/, fn ->
+        Lifecycle.new!(
+          initial_state: :a,
+          states: %{a: %StateConfig{}, b: %StateConfig{}},
+          transitions: [
+            %{from: :a, to: :b, trigger: {:tool_call, "x"}, guard: fn _a, _b -> true end}
+          ]
+        )
+      end
+    end
+  end
+
+  describe "validate/1" do
+    test "returns {:ok, lifecycle} for valid struct" do
+      lc =
+        Lifecycle.new!(
+          initial_state: :ready,
+          states: %{ready: %StateConfig{}}
+        )
+
+      assert {:ok, ^lc} = Lifecycle.validate(lc)
+    end
+
+    test "returns {:error, reason} for invalid struct" do
+      invalid = %Lifecycle{initial_state: :missing, states: %{a: %StateConfig{}}}
+      assert {:error, reason} = Lifecycle.validate(invalid)
+      assert reason =~ "initial_state :missing not found"
+    end
+
+    test "returns {:error, reason} for empty states" do
+      invalid = %Lifecycle{initial_state: :a, states: %{}}
+      assert {:error, reason} = Lifecycle.validate(invalid)
+      assert reason =~ "at least one state"
+    end
   end
 
   describe "StateConfig" do
