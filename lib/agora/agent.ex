@@ -47,6 +47,7 @@ defmodule Agora.Agent do
   require Logger
 
   alias Agora.{AgentConfig, Error, Memory, Message, Provider, StreamEvent, ToolBroker}
+  alias Agora.Agent.Loop
   alias Agora.Middleware.{Chain, Context}
   alias Agora.Provider.StreamAccumulator
 
@@ -415,15 +416,32 @@ defmodule Agora.Agent do
   defp safe_reasoning_loop(messages, state) do
     Process.put(@messages_key, messages)
 
-    case reasoning_loop(messages, state) do
-      {:ok, response, new_state} ->
-        Process.delete(@messages_key)
-        {{:ok, response}, new_state}
+    loop_state = %Loop.State{
+      config: state.config,
+      messages: messages,
+      middleware_metadata: state.middleware_metadata,
+      iteration: state.iteration,
+      on_messages_update: fn msgs -> Process.put(@messages_key, msgs) end
+    }
 
-      {:error, error, new_state} ->
-        Process.delete(@messages_key)
-        {{:error, error}, new_state}
-    end
+    %Loop.RunResult{outcome: outcome, state: final_loop_state} = Loop.run(loop_state)
+
+    Process.delete(@messages_key)
+
+    result =
+      case outcome do
+        {:done, response} -> {:ok, response}
+        {:error, _} = err -> err
+      end
+
+    final_state = %{
+      state
+      | messages: final_loop_state.messages,
+        iteration: final_loop_state.iteration,
+        middleware_metadata: final_loop_state.middleware_metadata
+    }
+
+    {result, final_state}
   catch
     kind, reason ->
       stacktrace = __STACKTRACE__
@@ -451,217 +469,7 @@ defmodule Agora.Agent do
       {{:error, error}, %{state | messages: recovered_messages}}
   end
 
-  # --- Private: Reasoning Loop ---
-
-  defp reasoning_loop(messages, %{iteration: iteration, config: config} = state) do
-    Process.put(@messages_key, messages)
-
-    if iteration >= config.max_iterations do
-      error =
-        Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
-          max_iterations: config.max_iterations,
-          iterations: iteration
-        })
-
-      {:error, error, %{state | messages: messages}}
-    else
-      iteration = iteration + 1
-      state = %{state | iteration: iteration}
-      telemetry_meta = telemetry_metadata(config)
-
-      :telemetry.execute(
-        [:agora, :agent, :loop_iteration, :start],
-        %{system_time: System.system_time()},
-        Map.put(telemetry_meta, :iteration, iteration)
-      )
-
-      iter_start = System.monotonic_time()
-      middleware = config.middleware
-
-      case do_iteration(messages, config, middleware, state.middleware_metadata) do
-        {:continue, new_messages, new_metadata} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, true)
-          )
-
-          reasoning_loop(new_messages, %{
-            state
-            | messages: new_messages,
-              middleware_metadata: new_metadata
-          })
-
-        {:done, response, new_messages} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, false)
-          )
-
-          {:ok, response, %{state | messages: new_messages}}
-
-        {:error, %Error{} = error} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:error, error)
-          )
-
-          {:error, error, %{state | messages: messages}}
-      end
-    end
-  end
-
-  # --- Private: Iteration (fast path — no middleware) ---
-
-  defp do_iteration(messages, config, [], _metadata) do
-    case Provider.chat(config.provider, messages, config) do
-      {:ok, %Message{tool_calls: tool_calls} = response} when tool_calls != [] ->
-        messages = messages ++ [response]
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools)
-        tool_msg = Message.tool_results(results)
-        messages = messages ++ [tool_msg]
-        {:continue, messages, %{}}
-
-      {:ok, %Message{} = response} ->
-        messages = messages ++ [response]
-        {:done, response, messages}
-
-      {:error, %Error{} = error} ->
-        {:error, error}
-    end
-  end
-
-  # --- Private: Iteration (middleware path) ---
-
-  defp do_iteration(messages, config, middleware, metadata) do
-    # Hook 1: before_provider_call
-    ctx =
-      Context.new(
-        hook: :before_provider_call,
-        messages: messages,
-        config: config,
-        metadata: metadata
-      )
-
-    case Chain.run(middleware, ctx) do
-      {:halt, reason} ->
-        {:error, wrap_halt_reason(reason)}
-
-      {:ok, ctx} ->
-        iter_messages = ctx.messages
-        iter_config = ctx.config
-        metadata = ctx.metadata
-
-        case Provider.chat(iter_config.provider, iter_messages, iter_config) do
-          {:error, %Error{} = error} ->
-            {:error, error}
-
-          {:ok, %Message{} = response} ->
-            # Hook 2: after_provider_call (unified — middleware decides tool-call flow)
-            raw_tool_calls = response.tool_calls
-
-            ctx =
-              Context.new(
-                hook: :after_provider_call,
-                messages: iter_messages,
-                response: response,
-                tool_calls: raw_tool_calls,
-                config: iter_config,
-                metadata: metadata
-              )
-
-            case Chain.run(middleware, ctx) do
-              {:halt, reason} ->
-                {:error, wrap_halt_reason(reason)}
-
-              {:ok, ctx} ->
-                # Branch on middleware-modified tool_calls, not raw response
-                if ctx.tool_calls != [] do
-                  handle_tool_calls(
-                    iter_messages,
-                    ctx.response,
-                    ctx.tool_calls,
-                    iter_config,
-                    middleware,
-                    ctx.metadata
-                  )
-                else
-                  # Scrub stale tool_calls from response before persisting to history.
-                  # Middleware may have cleared ctx.tool_calls without mutating ctx.response,
-                  # leaving tool_calls on the assistant message with no corresponding :tool message.
-                  final_response =
-                    if ctx.response.tool_calls != [] do
-                      %{ctx.response | tool_calls: []}
-                    else
-                      ctx.response
-                    end
-
-                  new_messages = iter_messages ++ [final_response]
-                  {:done, final_response, new_messages}
-                end
-            end
-        end
-    end
-  end
-
-  defp handle_tool_calls(messages, response, tool_calls, iter_config, middleware, metadata) do
-    # Hook 3: before_tool_call
-    ctx =
-      Context.new(
-        hook: :before_tool_call,
-        messages: messages,
-        response: response,
-        tool_calls: tool_calls,
-        config: iter_config,
-        metadata: metadata
-      )
-
-    case Chain.run(middleware, ctx) do
-      {:halt, reason} ->
-        {:error, wrap_halt_reason(reason)}
-
-      {:ok, ctx} ->
-        approved_calls = ctx.tool_calls
-        metadata = ctx.metadata
-
-        # D14: If middleware filtered tool_calls, construct modified assistant message
-        assistant_msg =
-          if approved_calls == response.tool_calls do
-            response
-          else
-            %{response | tool_calls: approved_calls}
-          end
-
-        messages = messages ++ [assistant_msg]
-        {:ok, results} = ToolBroker.execute(approved_calls, iter_config.tools)
-
-        # Hook 4: after_tool_call — receives filtered assistant_msg, not raw response
-        ctx =
-          Context.new(
-            hook: :after_tool_call,
-            messages: messages,
-            response: assistant_msg,
-            tool_calls: approved_calls,
-            tool_results: results,
-            config: iter_config,
-            metadata: metadata
-          )
-
-        case Chain.run(middleware, ctx) do
-          {:halt, reason} ->
-            {:error, wrap_halt_reason(reason)}
-
-          {:ok, ctx} ->
-            tool_msg = Message.tool_results(ctx.tool_results)
-            new_messages = messages ++ [tool_msg]
-            {:continue, new_messages, ctx.metadata}
-        end
-    end
-  end
-
-  # --- Private: Halt reason normalization ---
+  # --- Private: Halt reason normalization (used by streaming path) ---
 
   defp wrap_halt_reason(%Error{} = error), do: error
 
