@@ -422,7 +422,7 @@ defmodule Agora.Workflow.Executor do
   end
 
   defp execute_handler(%Step{handler: %AgentConfig{} = config} = step, results, run_ctx) do
-    config = maybe_inject_context_policy(config, run_ctx.context_policy)
+    config = maybe_inject_context_policy(config, run_ctx.context_policy, run_ctx.telemetry_metadata)
     message = build_agent_message(step, results)
 
     case Agora.Agent.Supervisor.start_agent(config) do
@@ -444,10 +444,12 @@ defmodule Agora.Workflow.Executor do
     end
   end
 
-  defp maybe_inject_context_policy(config, nil), do: config
-  defp maybe_inject_context_policy(config, %ContextPolicy{strategy: :none}), do: config
+  defp maybe_inject_context_policy(config, nil, _telemetry_metadata), do: config
 
-  defp maybe_inject_context_policy(config, %ContextPolicy{} = policy) do
+  defp maybe_inject_context_policy(config, %ContextPolicy{strategy: :none}, _telemetry_metadata),
+    do: config
+
+  defp maybe_inject_context_policy(config, %ContextPolicy{} = policy, telemetry_metadata) do
     compaction_mw = fn ctx, next ->
       if ctx.hook == :before_provider_call do
         before_count = length(ctx.messages)
@@ -458,7 +460,11 @@ defmodule Agora.Workflow.Executor do
           Agora.Telemetry.emit(
             [:agora, :mode, :context_compacted],
             %{system_time: System.system_time()},
-            %{strategy: policy.strategy, before: before_count, after: after_count}
+            Map.merge(telemetry_metadata, %{
+              strategy: policy.strategy,
+              before: before_count,
+              after: after_count
+            })
           )
         end
 

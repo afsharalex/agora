@@ -344,6 +344,52 @@ defmodule Agora.ExecutionStreamTest do
 
       :telemetry.detach("compaction-test-#{inspect(ref)}")
     end
+
+    test "context_compacted event includes telemetry_metadata" do
+      test_pid = self()
+      ref = make_ref()
+
+      :telemetry.attach(
+        "compaction-meta-test-#{inspect(ref)}",
+        [:agora, :mode, :context_compacted],
+        fn _event, _measurements, metadata, _config ->
+          send(test_pid, {:compacted_meta, metadata})
+        end,
+        nil
+      )
+
+      policy = ContextPolicy.new!(strategy: :sliding_window, window_size: 2)
+      counter = :counters.new(1, [:atomics])
+
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              count = :counters.get(counter, 1)
+              :counters.add(counter, 1, 1)
+              {:ok, Message.assistant("Response #{count}")}
+            end
+          ]
+        )
+
+      {:ok, _result} =
+        Agora.run_mode(:round_robin, "Hello",
+          agents: %{a: config, b: config},
+          termination: TerminationCondition.max_turns(4),
+          context_policy: policy,
+          telemetry_metadata: %{run_id: "test-123"}
+        )
+
+      assert_receive {:compacted_meta, metadata}, 1000
+      assert metadata.strategy == :sliding_window
+      assert metadata.before > metadata.after
+      assert metadata.run_id == "test-123"
+
+      :telemetry.detach("compaction-meta-test-#{inspect(ref)}")
+    end
   end
 
   describe "early halt" do

@@ -82,15 +82,16 @@ defmodule Agora.Execution do
   end
 
   @doc """
-  Starts a streaming orchestrator mode execution and returns an enumerable stream.
+  Starts a streaming mode execution and returns an enumerable stream of `ModeEvent`s.
 
-  Starts a temporary Runner, begins streaming, and wraps the stream with cleanup
-  logic so the Runner is stopped when the stream is fully consumed, halted early,
+  Supports both orchestrator modes (`:single`, `:round_robin`, etc.) and workflow
+  modes (`:dag`, `:sequential`, `:conditional`, `:parallel`). Resources are
+  automatically cleaned up when the stream is fully consumed, halted early,
   or the caller process crashes.
 
   Returns `{:ok, Enumerable.t()}` where each element is a `%ModeEvent{}`.
   """
-  @spec run_mode_stream(atom(), String.t() | Message.t(), keyword()) ::
+  @spec run_mode_stream(atom(), term(), keyword()) ::
           {:ok, Enumerable.t()} | {:error, Error.t()}
   def run_mode_stream(mode, input, opts \\ [])
 
@@ -288,12 +289,45 @@ defmodule Agora.Execution do
         streaming_workflow_run(mode, workflow_input, opts, caller, stream_ref)
       end)
 
+    # Watcher: monitors caller for crash cleanup
+    spawn(fn ->
+      caller_ref = Process.monitor(caller)
+      task_ref = Process.monitor(task_pid)
+
+      receive do
+        {:DOWN, ^caller_ref, :process, ^caller, _reason} ->
+          Process.exit(task_pid, :shutdown)
+
+        {:DOWN, ^task_ref, :process, ^task_pid, _reason} ->
+          :ok
+      end
+    end)
+
     stream = Agora.Stream.new(stream_ref, task_pid, caller, error_fn: &ModeEvent.error/1)
-    {:ok, stream}
+
+    wrapped =
+      Stream.transform(
+        stream,
+        fn -> :ok end,
+        fn event, :ok -> {[event], :ok} end,
+        fn :ok -> Process.exit(task_pid, :shutdown) end
+      )
+
+    {:ok, wrapped}
   end
 
   defp streaming_workflow_run(mode, workflow_input, opts, caller, ref) do
-    emit = fn event -> send(caller, {Agora.Stream, ref, event}) end
+    telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
+
+    emit = fn event ->
+      send(caller, {Agora.Stream, ref, event})
+
+      Agora.Telemetry.emit(
+        [:agora, :mode, :event],
+        %{system_time: System.system_time()},
+        Map.merge(telemetry_metadata, %{event: event})
+      )
+    end
 
     try do
       emit.(ModeEvent.mode_started(mode, :term, 0))
@@ -376,6 +410,8 @@ defmodule Agora.Execution do
         opts
 
       %ContextPolicy{} = policy ->
+        telemetry_metadata = Keyword.get(opts, :telemetry_metadata, %{})
+
         compaction_mw = fn ctx, next ->
           if ctx.hook == :before_provider_call do
             before_count = length(ctx.messages)
@@ -386,7 +422,11 @@ defmodule Agora.Execution do
               Agora.Telemetry.emit(
                 [:agora, :mode, :context_compacted],
                 %{system_time: System.system_time()},
-                %{strategy: policy.strategy, before: before_count, after: after_count}
+                Map.merge(telemetry_metadata, %{
+                  strategy: policy.strategy,
+                  before: before_count,
+                  after: after_count
+                })
               )
             end
 

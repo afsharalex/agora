@@ -210,5 +210,101 @@ defmodule Agora.ExecutionWorkflowStreamTest do
         assert %ModeEvent{} = event
       end
     end
+
+    test "stream task is cleaned up after early halt" do
+      {:ok, stream} =
+        Agora.run_mode_stream(:sequential, [
+          {:a, fn _r -> Process.sleep(10); {:ok, 1} end},
+          {:b, fn _r -> Process.sleep(10); {:ok, 2} end},
+          {:c, fn _r -> Process.sleep(10); {:ok, 3} end}
+        ])
+
+      _events = Enum.take(stream, 1)
+
+      # Give cleanup a moment to run
+      Process.sleep(50)
+
+      # The stream task should have been killed by the after-fun
+      # We can't directly inspect the task pid, but we can verify no lingering
+      # messages arrive from the stream
+      refute_receive {Agora.Stream, _, _}, 100
+    end
+  end
+
+  describe "telemetry emission" do
+    test "workflow streaming emits [:agora, :mode, :event] telemetry" do
+      test_ref = make_ref()
+      test_pid = self()
+
+      handler_id = "wf-stream-telemetry-#{inspect(test_ref)}"
+
+      :telemetry.attach(
+        handler_id,
+        [:agora, :mode, :event],
+        fn _event, _measurements, metadata, _ ->
+          send(test_pid, {:telemetry_event, test_ref, metadata.event})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {:ok, stream} =
+        Agora.run_mode_stream(:sequential, [
+          {:a, fn _r -> {:ok, 1} end}
+        ])
+
+      _events = Enum.to_list(stream)
+
+      # Should receive telemetry for mode_started at minimum
+      assert_receive {:telemetry_event, ^test_ref, %ModeEvent{type: :mode_started}}, 1000
+      assert_receive {:telemetry_event, ^test_ref, %ModeEvent{type: :done}}, 1000
+    end
+
+    test "workflow streaming merges telemetry_metadata into mode events" do
+      test_ref = make_ref()
+      test_pid = self()
+
+      handler_id = "wf-stream-meta-#{inspect(test_ref)}"
+
+      :telemetry.attach(
+        handler_id,
+        [:agora, :mode, :event],
+        fn _event, _measurements, metadata, _ ->
+          send(test_pid, {:telemetry_meta, test_ref, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {:ok, stream} =
+        Agora.run_mode_stream(:sequential, [
+          {:a, fn _r -> {:ok, 1} end}
+        ], telemetry_metadata: %{custom_key: :test_value})
+
+      _events = Enum.to_list(stream)
+
+      assert_receive {:telemetry_meta, ^test_ref, metadata}, 1000
+      assert metadata.custom_key == :test_value
+      assert %ModeEvent{} = metadata.event
+    end
+
+    test "EventBusBridge receives workflow stream events" do
+      Agora.Telemetry.EventBusBridge.attach(topic: :wf_stream_test)
+      on_exit(fn -> Agora.Telemetry.EventBusBridge.detach() end)
+
+      Agora.EventBus.subscribe(:wf_stream_test)
+
+      {:ok, stream} =
+        Agora.run_mode_stream(:sequential, [
+          {:a, fn _r -> {:ok, 1} end}
+        ])
+
+      _events = Enum.to_list(stream)
+
+      assert_receive {Agora.EventBus, :wf_stream_test, %ModeEvent{type: :mode_started}}
+      assert_receive {Agora.EventBus, :wf_stream_test, %ModeEvent{type: :done}}
+    end
   end
 end

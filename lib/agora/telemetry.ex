@@ -119,9 +119,9 @@ defmodule Agora.Telemetry do
 
   ### Mode Events
 
-  Emitted by `Agora.Orchestrator.Runner` and `Agora.Workflow.Executor` during
-  mode-level execution. These events are always emitted (both sync and streaming paths).
-  The EventBus bridge (`Agora.Telemetry.EventBusBridge`) can forward them to subscribers.
+  Emitted by `Agora.Orchestrator.Runner` (orchestrator modes) and `Agora.Execution`
+  (workflow streaming mode) during mode-level execution. The EventBus bridge
+  (`Agora.Telemetry.EventBusBridge`) can forward them to subscribers.
 
   | Event | Measurements | Metadata |
   |---|---|---|
