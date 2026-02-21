@@ -503,13 +503,26 @@ defmodule Agora.Workflow.DefinitionTest do
       end
     end
 
-    test "malformed inputs: single atom instead of list" do
-      # Should not crash — normalizes to list and validates
-      assert_raise CompileError, ~r/unknown step IDs/, fn ->
-        defmodule MalformedInputModule do
+    test "inputs: bare atom raises CompileError" do
+      assert_raise CompileError, ~r/:inputs must be a list of atoms/, fn ->
+        defmodule BareAtomInputModule do
           use Agora.Workflow.Definition
 
-          step(:a, inputs: :nonexistent, run: fn _ -> {:ok, 1} end)
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, inputs: :a, run: fn _ -> {:ok, 2} end)
+        end
+      end
+    end
+
+    test "parallel without :from or :to raises CompileError" do
+      assert_raise CompileError, ~r/requires at least one of :from or :to/, fn ->
+        defmodule BadParallelModule do
+          use Agora.Workflow.Definition
+
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
+
+          parallel([:a, :b], [])
         end
       end
     end

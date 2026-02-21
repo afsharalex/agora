@@ -342,7 +342,9 @@ defmodule Agora.Workflow.Definition do
     known_ids = MapSet.new(step_ids)
 
     validate_unique_steps!(step_ids, env)
+    validate_inputs_format!(steps, env)
     validate_step_conditions!(steps, env)
+    validate_parallel_opts!(parallels, env)
     all_edges = resolve_all_edges(steps, edges, sequences, parallels, env)
     validate_endpoints!(all_edges, known_ids, env)
     validate_no_self_loops!(all_edges, env)
@@ -388,6 +390,39 @@ defmodule Agora.Workflow.Definition do
       end
 
       MapSet.put(seen, id)
+    end)
+  end
+
+  defp validate_inputs_format!(steps, env) do
+    Enum.each(steps, fn {step_id, opts, _handler} ->
+      opts = eval_opts_for_validation(opts)
+
+      if Keyword.has_key?(opts, :inputs) do
+        inputs = opts[:inputs]
+
+        unless is_list(inputs) do
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "step #{inspect(step_id)} :inputs must be a list of atoms, " <>
+                "got: #{inspect(inputs)}. Use :after for a single dependency"
+        end
+      end
+    end)
+  end
+
+  defp validate_parallel_opts!(parallels, env) do
+    Enum.each(parallels, fn {_ids, opts} ->
+      has_from = Keyword.has_key?(opts, :from)
+      has_to = Keyword.has_key?(opts, :to)
+
+      unless has_from or has_to do
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description: "parallel/2 requires at least one of :from or :to"
+      end
     end)
   end
 
