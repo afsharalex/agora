@@ -10,7 +10,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule BasicModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
       end
 
       assert function_exported?(BasicModule, :__workflow__, 0)
@@ -21,7 +21,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule OptsModule do
         use Agora.Workflow.Definition, timeout: 10_000, retry: 2
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
       end
 
       w = OptsModule.__workflow__()
@@ -42,7 +42,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule OneStepModule do
         use Agora.Workflow.Definition
 
-        step :fetch, run: fn _ -> {:ok, "data"} end
+        step(:fetch, run: fn _ -> {:ok, "data"} end)
       end
 
       w = OneStepModule.__workflow__()
@@ -58,7 +58,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule DoBlockModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 42} end
+        step(:a, run: fn _ -> {:ok, 42} end)
 
         step :b, after: :a do
           {:ok, val} = results[:a]
@@ -91,7 +91,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule OptsDoModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
 
         step :b, after: :a, timeout: 5_000 do
           {:ok, val} = results[:a]
@@ -124,7 +124,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule RunModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, "from_run"} end
+        step(:a, run: fn _ -> {:ok, "from_run"} end)
       end
 
       w = RunModule.__workflow__()
@@ -137,7 +137,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule RunCaptureModule do
         use Agora.Workflow.Definition
 
-        step :a, run: &__MODULE__.my_handler/1
+        step(:a, run: &__MODULE__.my_handler/1)
 
         def my_handler(_results), do: {:ok, "captured"}
       end
@@ -150,12 +150,16 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule RunOptsModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
 
-        step :b, after: :a, retry: 3, run: fn r ->
-          {:ok, val} = r[:a]
-          {:ok, val + 1}
-        end
+        step(:b,
+          after: :a,
+          retry: 3,
+          run: fn r ->
+            {:ok, val} = r[:a]
+            {:ok, val + 1}
+          end
+        )
       end
 
       w = RunOptsModule.__workflow__()
@@ -179,7 +183,7 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule NeitherModule do
           use Agora.Workflow.Definition
 
-          step :a, after: :b
+          step(:a, after: :b)
         end
       end
     end
@@ -190,9 +194,9 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule OrderModule do
         use Agora.Workflow.Definition
 
-        step :first, run: fn _ -> {:ok, 1} end
-        step :second, run: fn _ -> {:ok, 2} end
-        step :third, run: fn _ -> {:ok, 3} end
+        step(:first, run: fn _ -> {:ok, 1} end)
+        step(:second, run: fn _ -> {:ok, 2} end)
+        step(:third, run: fn _ -> {:ok, 3} end)
       end
 
       assert [:first, :second, :third] = OrderModule.__workflow_steps__()
@@ -206,10 +210,10 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule EdgeModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, run: fn _ -> {:ok, 2} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
 
-        edge :a, :b
+        edge(:a, :b)
       end
 
       w = EdgeModule.__workflow__()
@@ -224,10 +228,10 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule CondEdgeModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, run: fn _ -> {:ok, 2} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
 
-        edge :a, :b, condition: fn _ -> true end
+        edge(:a, :b, condition: fn _ -> true end)
       end
 
       w = CondEdgeModule.__workflow__()
@@ -239,10 +243,10 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule WhenEdgeModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, run: fn _ -> {:ok, 2} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
 
-        edge :a, :b, when: fn _ -> true end
+        edge(:a, :b, when: fn _ -> true end)
       end
 
       w = WhenEdgeModule.__workflow__()
@@ -255,10 +259,10 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule BothEdgeModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
-          step :b, run: fn _ -> {:ok, 2} end
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
 
-          edge :a, :b, condition: fn _ -> true end, when: fn _ -> false end
+          edge(:a, :b, condition: fn _ -> true end, when: fn _ -> false end)
         end
       end
     end
@@ -269,11 +273,11 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule ChainModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, run: fn _ -> {:ok, 2} end
-        step :c, run: fn _ -> {:ok, 3} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
+        step(:c, run: fn _ -> {:ok, 3} end)
 
-        chain [:a, :b, :c]
+        chain([:a, :b, :c])
       end
 
       w = ChainModule.__workflow__()
@@ -292,12 +296,12 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule ParallelModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, run: fn _ -> {:ok, 2} end
-        step :c, run: fn _ -> {:ok, 3} end
-        step :d, run: fn _ -> {:ok, 4} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, run: fn _ -> {:ok, 2} end)
+        step(:c, run: fn _ -> {:ok, 3} end)
+        step(:d, run: fn _ -> {:ok, 4} end)
 
-        parallel [:b, :c], from: :a, to: :d
+        parallel([:b, :c], from: :a, to: :d)
       end
 
       w = ParallelModule.__workflow__()
@@ -313,7 +317,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule WorkflowGenModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
 
         step :b, after: :a do
           {:ok, val} = results[:a]
@@ -331,9 +335,9 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule StepsListModule do
         use Agora.Workflow.Definition
 
-        step :z, run: fn _ -> {:ok, 1} end
-        step :a, run: fn _ -> {:ok, 2} end
-        step :m, run: fn _ -> {:ok, 3} end
+        step(:z, run: fn _ -> {:ok, 1} end)
+        step(:a, run: fn _ -> {:ok, 2} end)
+        step(:m, run: fn _ -> {:ok, 3} end)
       end
 
       assert [:z, :a, :m] = StepsListModule.__workflow_steps__()
@@ -343,26 +347,28 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule MixedModule do
         use Agora.Workflow.Definition
 
-        step :source, run: fn _ -> {:ok, "data"} end
+        step(:source, run: fn _ -> {:ok, "data"} end)
 
         step :parse, after: :source do
           {:ok, data} = results[:source]
           {:ok, String.upcase(data)}
         end
 
-        step :validate, run: fn r ->
-          {:ok, _} = r[:parse]
-          {:ok, :valid}
-        end
+        step(:validate,
+          run: fn r ->
+            {:ok, _} = r[:parse]
+            {:ok, :valid}
+          end
+        )
 
-        step :store, run: fn _ -> {:ok, :stored} end
-        step :notify, run: fn _ -> {:ok, :notified} end
+        step(:store, run: fn _ -> {:ok, :stored} end)
+        step(:notify, run: fn _ -> {:ok, :notified} end)
 
-        edge :parse, :validate
-        chain [:validate, :store]
-        parallel [:store, :notify], to: :_sink
+        edge(:parse, :validate)
+        chain([:validate, :store])
+        parallel([:store, :notify], to: :_sink)
 
-        step :_sink, run: fn _ -> {:ok, :done} end
+        step(:_sink, run: fn _ -> {:ok, :done} end)
       end
 
       w = MixedModule.__workflow__()
@@ -379,8 +385,8 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule DupStepModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
-          step :a, run: fn _ -> {:ok, 2} end
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:a, run: fn _ -> {:ok, 2} end)
         end
       end
     end
@@ -390,8 +396,8 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule SelfLoopModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
-          edge :a, :a
+          step(:a, run: fn _ -> {:ok, 1} end)
+          edge(:a, :a)
         end
       end
     end
@@ -401,11 +407,11 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule CycleModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
-          step :b, run: fn _ -> {:ok, 2} end
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
 
-          edge :a, :b
-          edge :b, :a
+          edge(:a, :b)
+          edge(:b, :a)
         end
       end
     end
@@ -416,11 +422,11 @@ defmodule Agora.Workflow.DefinitionTest do
           defmodule ConditionalCycleModule do
             use Agora.Workflow.Definition
 
-            step :a, run: fn _ -> {:ok, 1} end
-            step :b, run: fn _ -> {:ok, 2} end
+            step(:a, run: fn _ -> {:ok, 1} end)
+            step(:b, run: fn _ -> {:ok, 2} end)
 
-            edge :a, :b
-            edge :b, :a, condition: fn _ -> false end
+            edge(:a, :b)
+            edge(:b, :a, condition: fn _ -> false end)
           end
         end)
 
@@ -436,9 +442,9 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule UnknownEndpointModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
+          step(:a, run: fn _ -> {:ok, 1} end)
 
-          edge :a, :nonexistent
+          edge(:a, :nonexistent)
         end
       end
     end
@@ -448,7 +454,7 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule UnknownInputModule do
           use Agora.Workflow.Definition
 
-          step :a, after: :nonexistent, run: fn _ -> {:ok, 1} end
+          step(:a, after: :nonexistent, run: fn _ -> {:ok, 1} end)
         end
       end
     end
@@ -459,8 +465,8 @@ defmodule Agora.Workflow.DefinitionTest do
           defmodule CleanModule do
             use Agora.Workflow.Definition
 
-            step :a, run: fn _ -> {:ok, 1} end
-            step :b, after: :a, run: fn r -> r[:a] end
+            step(:a, run: fn _ -> {:ok, 1} end)
+            step(:b, after: :a, run: fn r -> r[:a] end)
           end
         end)
 
@@ -474,11 +480,11 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule ChainCycleModule do
           use Agora.Workflow.Definition
 
-          step :a, run: fn _ -> {:ok, 1} end
-          step :b, run: fn _ -> {:ok, 2} end
+          step(:a, run: fn _ -> {:ok, 1} end)
+          step(:b, run: fn _ -> {:ok, 2} end)
 
-          chain [:a, :b]
-          edge :b, :a
+          chain([:a, :b])
+          edge(:b, :a)
         end
       end
     end
@@ -488,8 +494,8 @@ defmodule Agora.Workflow.DefinitionTest do
         defmodule AfterCycleModule do
           use Agora.Workflow.Definition
 
-          step :a, after: :b, run: fn _ -> {:ok, 1} end
-          step :b, after: :a, run: fn _ -> {:ok, 2} end
+          step(:a, after: :b, run: fn _ -> {:ok, 1} end)
+          step(:b, after: :a, run: fn _ -> {:ok, 2} end)
         end
       end
     end
@@ -504,7 +510,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule TestableModule do
         use Agora.Workflow.Definition
 
-        step :fetch, run: fn _ -> {:ok, [1, 2, 3]} end
+        step(:fetch, run: fn _ -> {:ok, [1, 2, 3]} end)
 
         step :count, after: :fetch do
           {:ok, items} = results[:fetch]
@@ -521,7 +527,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule ResultsShapeModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, "hello"} end
+        step(:a, run: fn _ -> {:ok, "hello"} end)
 
         step :b, after: :a do
           {:ok, Map.keys(results)}
@@ -535,7 +541,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule NoFnModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
+        step(:a, run: fn _ -> {:ok, 1} end)
       end
 
       refute function_exported?(NoFnModule, :__agora_step_a__, 1)
@@ -549,7 +555,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule ExecutableModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 10} end
+        step(:a, run: fn _ -> {:ok, 10} end)
 
         step :b, after: :a do
           {:ok, val} = results[:a]
@@ -567,8 +573,8 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule DefaultsModule do
         use Agora.Workflow.Definition, timeout: 5_000, retry: 1
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, timeout: 10_000, run: fn _ -> {:ok, 2} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, timeout: 10_000, run: fn _ -> {:ok, 2} end)
       end
 
       w = DefaultsModule.__workflow__()
@@ -587,7 +593,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule RunWorkflowModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 42} end
+        step(:a, run: fn _ -> {:ok, 42} end)
       end
 
       {:ok, results} = Agora.run_workflow(RunWorkflowModule)
@@ -610,8 +616,8 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule RunWorkflowOptsModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, 1} end
-        step :b, after: :a, run: fn _ -> {:error, Agora.Error.new(:workflow_error, "fail")} end
+        step(:a, run: fn _ -> {:ok, 1} end)
+        step(:b, after: :a, run: fn _ -> {:error, Agora.Error.new(:workflow_error, "fail")} end)
       end
 
       # With on_failure: :skip, the workflow should still succeed
@@ -623,7 +629,7 @@ defmodule Agora.Workflow.DefinitionTest do
       defmodule StructFormModule do
         use Agora.Workflow.Definition
 
-        step :a, run: fn _ -> {:ok, "struct"} end
+        step(:a, run: fn _ -> {:ok, "struct"} end)
       end
 
       w = StructFormModule.__workflow__()

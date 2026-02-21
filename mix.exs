@@ -134,6 +134,7 @@ defmodule Agora.MixProject do
         Workflows: [
           Agora.Workflow,
           Agora.Workflow.Builder,
+          Agora.Workflow.Definition,
           Agora.Workflow.DSL,
           Agora.Workflow.Executor,
           Agora.Workflow.Step,

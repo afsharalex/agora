@@ -345,6 +345,73 @@ end
 
 Note: the DSL `chain` maps to `Builder.sequence/2` (wire-only for pre-defined steps), not `Builder.chain/2` (which defines steps and wires them).
 
+## Module DSL
+
+For reusable, documentable workflow modules, `use Agora.Workflow.Definition` provides a module-level DSL with compile-time validation:
+
+```elixir
+defmodule MyApp.Workflows.ETL do
+  use Agora.Workflow.Definition,
+    timeout: 30_000,
+    retry: 1
+
+  step :fetch do
+    {:ok, MyApp.API.get_users()}
+  end
+
+  step :transform, after: :fetch do
+    {:ok, users} = results[:fetch]
+    {:ok, Enum.map(users, &normalize/1)}
+  end
+
+  step :store, after: :transform, retry: 3, run: &MyApp.DB.store/1
+end
+
+{:ok, results} = Agora.run_workflow(MyApp.Workflows.ETL)
+```
+
+### Module-Level vs Inline DSL
+
+| Aspect | Module DSL (`Definition`) | Inline DSL (`DSL`) |
+|--------|--------------------------|-------------------|
+| Scope | Module-level, reusable | Block expression, inline |
+| Validation | Compile-time (cycles, endpoints) | Build-time via Builder |
+| Testing | Individual step functions testable | Handler closures only |
+| Reuse | Import module, call `__workflow__/0` | Assign to variable |
+| Use case | Production pipelines, shared workflows | Quick prototypes, scripts |
+
+### Step Testing
+
+Steps defined with `do` blocks generate public functions (with `@doc false`) that can be tested in isolation:
+
+```elixir
+# In your test file
+test "transform step processes data correctly" do
+  mock_results = %{fetch: {:ok, ["Alice", "Bob"]}}
+  assert {:ok, ["ALICE", "BOB"]} = MyApp.Workflows.ETL.__agora_step_transform__(mock_results)
+end
+```
+
+Steps defined with `run:` do not generate named functions and are tested through the workflow or by testing the function directly.
+
+### Compile-Time Validation
+
+The module DSL validates the workflow graph at compile time:
+
+- **Duplicate step IDs** — compile error
+- **Self-loop edges** — compile error
+- **Unconditional cycles** — compile error (can never execute)
+- **Conditional cycles** — compile warning (may break at runtime)
+- **Unknown edge endpoints** — compile error
+- **Unknown input references** — compile error
+
+### Generated Functions
+
+Each workflow module defines:
+
+- `__workflow__/0` — returns a `%Agora.Workflow{}` struct
+- `__workflow_steps__/0` — returns step IDs in definition order
+
 ## Builder API Reference
 
 | Function | Description |

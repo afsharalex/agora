@@ -80,11 +80,11 @@ defmodule Agora.Workflow.Definition do
       raise CompileError,
         file: __CALLER__.file,
         line: __CALLER__.line,
-        description:
-          "use Agora.Workflow.Definition expects a keyword list, got: #{inspect(opts)}"
+        description: "use Agora.Workflow.Definition expects a keyword list, got: #{inspect(opts)}"
     end
 
     invalid = Keyword.keys(opts) -- @allowed_use_opts
+
     if invalid != [] do
       raise CompileError,
         file: __CALLER__.file,
@@ -95,7 +95,8 @@ defmodule Agora.Workflow.Definition do
     end
 
     quote do
-      import Agora.Workflow.Definition, only: [step: 2, step: 3, edge: 2, edge: 3, chain: 1, parallel: 2]
+      import Agora.Workflow.Definition,
+        only: [step: 2, step: 3, edge: 2, edge: 3, chain: 1, parallel: 2]
 
       Module.register_attribute(__MODULE__, :__agora_steps__, accumulate: true)
       Module.register_attribute(__MODULE__, :__agora_edges__, accumulate: true)
@@ -199,7 +200,8 @@ defmodule Agora.Workflow.Definition do
         escaped_handler = Macro.escape(handler)
 
         quote do
-          @__agora_steps__ {unquote(id), unquote(escaped_remaining), {:run, unquote(escaped_handler)}}
+          @__agora_steps__ {unquote(id), unquote(escaped_remaining),
+                            {:run, unquote(escaped_handler)}}
         end
     end
   end

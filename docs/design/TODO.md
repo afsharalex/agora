@@ -353,13 +353,13 @@ end
 
 ### 17. `Agora.Workflow.Definition` module scaffolding
 
-- [ ] **17.1** Create `lib/agora/workflow/definition.ex`
-- [ ] **17.2** Implement `__using__/1` macro — inject `import` for `step`, `edge`, `chain`, `parallel` macros
-- [ ] **17.3** Accept module-level options in `use` (e.g., `timeout:`, `retry:`) → stored as `step_defaults`
-- [ ] **17.4** Register `@before_compile Agora.Workflow.Definition` hook
-- [ ] **17.5** Initialize module attributes for accumulation: `@__agora_steps__`, `@__agora_edges__`
-- [ ] **17.6** Tests: `use Agora.Workflow.Definition` compiles without error
-- [ ] **17.7** Create `test/agora/workflow/definition_test.exs` test file
+- [x] **17.1** Create `lib/agora/workflow/definition.ex`
+- [x] **17.2** Implement `__using__/1` macro — inject `import` for `step`, `edge`, `chain`, `parallel` macros
+- [x] **17.3** Accept module-level options in `use` (e.g., `timeout:`, `retry:`) → stored as `step_defaults`
+- [x] **17.4** Register `@before_compile Agora.Workflow.Definition` hook
+- [x] **17.5** Initialize module attributes for accumulation: `@__agora_steps__`, `@__agora_edges__`
+- [x] **17.6** Tests: `use Agora.Workflow.Definition` compiles without error
+- [x] **17.7** Create `test/agora/workflow/definition_test.exs` test file
 
 ### 18. Module-level `step` macro
 
@@ -384,25 +384,25 @@ defp __agora_step_fetch__(results) do
 end
 ```
 
-- [ ] **18.1** Implement `step` macro with `do` block — generate private function, accumulate step metadata
-- [ ] **18.2** Private function naming: `__agora_step_<id>__/1` to avoid user namespace collisions
-- [ ] **18.3** Inject `results` parameter (or `_results` if unused)
-- [ ] **18.4** Support `run:` keyword form — store function ref directly, no private function generated
-- [ ] **18.5** Support all Phase 1 step options: `after:`, `condition:`/`when:`, `timeout:`, `retry:`
-- [ ] **18.6** Tests: `do` block step generates callable private function
-- [ ] **18.7** Tests: `run:` keyword step stores function reference
-- [ ] **18.8** Tests: step options passed through correctly
-- [ ] **18.9** Tests: multiple steps accumulate in definition order
+- [x] **18.1** Implement `step` macro with `do` block — generate private function, accumulate step metadata
+- [x] **18.2** Private function naming: `__agora_step_<id>__/1` to avoid user namespace collisions
+- [x] **18.3** Inject `results` parameter (or `_results` if unused)
+- [x] **18.4** Support `run:` keyword form — store function ref directly, no private function generated
+- [x] **18.5** Support all Phase 1 step options: `after:`, `condition:`/`when:`, `timeout:`, `retry:`
+- [x] **18.6** Tests: `do` block step generates callable private function
+- [x] **18.7** Tests: `run:` keyword step stores function reference
+- [x] **18.8** Tests: step options passed through correctly
+- [x] **18.9** Tests: multiple steps accumulate in definition order
 
 ### 19. Module-level `edge`, `chain`, `parallel` macros
 
-- [ ] **19.1** Implement `edge` macro — accumulate edge metadata via `@__agora_edges__`
-- [ ] **19.2** Support `condition:` and `when:` alias on edges
-- [ ] **19.3** Implement `chain` macro — accumulate sequence declaration
-- [ ] **19.4** Implement `parallel` macro — accumulate parallel declaration
-- [ ] **19.5** Tests: edges accumulated correctly
-- [ ] **19.6** Tests: chain generates sequence declaration
-- [ ] **19.7** Tests: parallel generates fan-out/fan-in declarations
+- [x] **19.1** Implement `edge` macro — accumulate edge metadata via `@__agora_edges__`
+- [x] **19.2** Support `condition:` and `when:` alias on edges
+- [x] **19.3** Implement `chain` macro — accumulate sequence declaration
+- [x] **19.4** Implement `parallel` macro — accumulate parallel declaration
+- [x] **19.5** Tests: edges accumulated correctly
+- [x] **19.6** Tests: chain generates sequence declaration
+- [x] **19.7** Tests: parallel generates fan-out/fan-in declarations
 
 ### 20. `@before_compile` — compile-time validation and `__workflow__/0` generation
 
@@ -417,30 +417,30 @@ def __before_compile__(env) do
 end
 ```
 
-- [ ] **20.1** Implement `__before_compile__/1` callback
-- [ ] **20.2** Read accumulated `@__agora_steps__` and `@__agora_edges__` from module
-- [ ] **20.3** Construct Builder pipeline from accumulated data
-- [ ] **20.4** Apply module-level `step_defaults` from `use` options
-- [ ] **20.5** Call `Builder.build!/1` at compile time — compile errors surface as readable messages
-- [ ] **20.6** Generate `__workflow__/0` function returning the compiled `%Workflow{}` struct
-- [ ] **20.7** Generate `__workflow_steps__/0` returning list of step IDs (introspection helper)
-- [ ] **20.8** Tests: `__workflow__/0` returns valid `%Workflow{}`
-- [ ] **20.9** Tests: `__workflow_steps__/0` returns step IDs in definition order
+- [x] **20.1** Implement `__before_compile__/1` callback
+- [x] **20.2** Read accumulated `@__agora_steps__` and `@__agora_edges__` from module
+- [x] **20.3** Construct Builder pipeline from accumulated data
+- [x] **20.4** Apply module-level `step_defaults` from `use` options
+- [x] **20.5** Call `Builder.build!/1` at compile time — compile errors surface as readable messages
+- [x] **20.6** Generate `__workflow__/0` function returning the compiled `%Workflow{}` struct
+- [x] **20.7** Generate `__workflow_steps__/0` returning list of step IDs (introspection helper)
+- [x] **20.8** Tests: `__workflow__/0` returns valid `%Workflow{}`
+- [x] **20.9** Tests: `__workflow_steps__/0` returns step IDs in definition order
 
 ### 21. Compile-time validation
 
 Best-effort compile-time checks surfaced as clear compilation errors.
 
-- [ ] **21.1** Duplicate step IDs → compile error (detected via module attribute accumulation)
-- [ ] **21.2** Self-loop edges → compile error
-- [ ] **21.3** Cycle detection on unconditional edges → compile error (unconditional cycles can never execute)
-- [ ] **21.4** Cycle detection on graphs containing conditional edges → compile warning (conditional edges may break the cycle at runtime)
-- [ ] **21.5** `condition:`/`when:` constraints (same as Phase 1) → compile error
-- [ ] **21.6** Tests: duplicate step ID → compile error with clear message
-- [ ] **21.7** Tests: self-loop → compile error
-- [ ] **21.8** Tests: unconditional cycle → compile error
-- [ ] **21.9** Tests: cycle involving conditional edge → compile warning (not error)
-- [ ] **21.10** Tests: valid workflow compiles without warnings
+- [x] **21.1** Duplicate step IDs → compile error (detected via module attribute accumulation)
+- [x] **21.2** Self-loop edges → compile error
+- [x] **21.3** Cycle detection on unconditional edges → compile error (unconditional cycles can never execute)
+- [x] **21.4** Cycle detection on graphs containing conditional edges → compile warning (conditional edges may break the cycle at runtime)
+- [x] **21.5** `condition:`/`when:` constraints (same as Phase 1) → compile error
+- [x] **21.6** Tests: duplicate step ID → compile error with clear message
+- [x] **21.7** Tests: self-loop → compile error
+- [x] **21.8** Tests: unconditional cycle → compile error
+- [x] **21.9** Tests: cycle involving conditional edge → compile warning (not error)
+- [x] **21.10** Tests: valid workflow compiles without warnings
 
 ### 22. `Agora.run_workflow/2` module support
 
@@ -454,12 +454,12 @@ Extend the convenience API to accept workflow modules in addition to `%Workflow{
 {:ok, results} = Agora.run_workflow(MyApp.Workflows.ETL, opts)
 ```
 
-- [ ] **22.1** Add module atom clause to `Agora.run_workflow/2` — call `module.__workflow__/0`
-- [ ] **22.2** Validate module implements `__workflow__/0` → `{:error, %Error{}}` if not
-- [ ] **22.3** Add module atom clause to `Agora.Workflow.Executor.run/2` (or handle in `Agora.run_workflow/2` before delegating)
-- [ ] **22.4** Tests: `Agora.run_workflow(MyModule)` works
-- [ ] **22.5** Tests: `Agora.run_workflow(ModuleWithoutWorkflow)` → error
-- [ ] **22.6** Tests: `Agora.run_workflow(MyModule, input: "data")` passes opts through
+- [x] **22.1** Add module atom clause to `Agora.run_workflow/2` — call `module.__workflow__/0`
+- [x] **22.2** Validate module implements `__workflow__/0` → `{:error, %Error{}}` if not
+- [x] **22.3** Add module atom clause to `Agora.Workflow.Executor.run/2` (or handle in `Agora.run_workflow/2` before delegating)
+- [x] **22.4** Tests: `Agora.run_workflow(MyModule)` works
+- [x] **22.5** Tests: `Agora.run_workflow(ModuleWithoutWorkflow)` → error
+- [x] **22.6** Tests: `Agora.run_workflow(MyModule, input: "data")` passes opts through
 
 ### 23. Step testing support
 
@@ -471,28 +471,28 @@ results = %{fetch: {:ok, ["Alice", "Bob"]}}
 assert {:ok, 2} = MyApp.Workflows.ETL.__agora_step_count__(results)
 ```
 
-- [ ] **23.1** Generated private step functions are testable via module — consider making them public with `@doc false`
-- [ ] **23.2** Alternative: add `test_step(module, step_id, results)` helper in a test support module
-- [ ] **23.3** Tests: individual step function callable with mock results
-- [ ] **23.4** Tests: step function receives correct results map shape
+- [x] **23.1** Generated private step functions are testable via module — consider making them public with `@doc false`
+- [x] **23.2** Alternative: add `test_step(module, step_id, results)` helper in a test support module
+- [x] **23.3** Tests: individual step function callable with mock results
+- [x] **23.4** Tests: step function receives correct results map shape
 
 ### 24. Phase 3 documentation
 
-- [ ] **24.1** Add `@moduledoc` and `@doc` to `Agora.Workflow.Definition`
-- [ ] **24.2** Add Module DSL section to `guides/workflows.md`
-- [ ] **24.3** Add `examples/workflow_module.exs` example script
-- [ ] **24.4** Add `Agora.Workflow.Definition` to `groups_for_modules` in `mix.exs`
-- [ ] **24.5** Document step testing pattern in guide
-- [ ] **24.6** Document module-level vs inline DSL tradeoffs in `guides/workflows.md`
+- [x] **24.1** Add `@moduledoc` and `@doc` to `Agora.Workflow.Definition`
+- [x] **24.2** Add Module DSL section to `guides/workflows.md`
+- [x] **24.3** Add `examples/workflow_module.exs` example script
+- [x] **24.4** Add `Agora.Workflow.Definition` to `groups_for_modules` in `mix.exs`
+- [x] **24.5** Document step testing pattern in guide
+- [x] **24.6** Document module-level vs inline DSL tradeoffs in `guides/workflows.md`
 
 ### 25. Phase 3 final verification
 
-- [ ] **25.1** All Phase 1 and Phase 2 tests still pass
-- [ ] **25.2** `mix compile --warnings-as-errors`
-- [ ] **25.3** `mix test` — all tests pass
-- [ ] **25.4** `mix format --check-formatted`
-- [ ] **25.5** `mix docs` builds cleanly
-- [ ] **25.6** `mix hex.build` succeeds
+- [x] **25.1** All Phase 1 and Phase 2 tests still pass
+- [x] **25.2** `mix compile --warnings-as-errors`
+- [x] **25.3** `mix test` — all tests pass
+- [x] **25.4** `mix format --check-formatted`
+- [x] **25.5** `mix docs` builds cleanly
+- [x] **25.6** `mix hex.build` succeeds
 
 ---
 
