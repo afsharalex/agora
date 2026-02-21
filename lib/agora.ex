@@ -6,7 +6,7 @@ defmodule Agora do
   with provider abstraction, tool execution, middleware, and orchestration patterns.
   """
 
-  alias Agora.{AgentConfig, Error, Message}
+  alias Agora.{AgentConfig, Error, Execution, Message}
 
   @doc """
   Returns the current version of Agora.
@@ -160,6 +160,39 @@ defmodule Agora do
   defp cleanup_stream(stream_task_pid, agent_pid) do
     Process.exit(stream_task_pid, :shutdown)
     Agora.Agent.Supervisor.stop_agent(agent_pid)
+  end
+
+  @doc """
+  Unified mode-first execution entry point.
+
+  For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`):
+  input is `String.t() | Message.t()`, `:agents` option required.
+
+  For workflow modes (`:dag`):
+  input is `Workflow.t() | module()`, workflow data passed via `:input` option.
+
+  ## Examples
+
+      # Orchestrator mode
+      {:ok, response} = Agora.run_mode(:round_robin, "Hello",
+        agents: %{a: config_a, b: config_b},
+        termination: TerminationCondition.max_turns(5)
+      )
+
+      # Workflow mode
+      {:ok, results} = Agora.run_mode(:dag, workflow, input: data)
+
+  """
+  @spec run_mode(atom(), term(), keyword()) ::
+          {:ok, Message.t() | map()} | {:error, Error.t()}
+  def run_mode(mode, input, opts \\ [])
+
+  def run_mode(mode, input, opts) when mode in [:dag] do
+    Execution.run_workflow(mode, input, opts)
+  end
+
+  def run_mode(mode, input, opts) do
+    Execution.run(mode, input, opts)
   end
 
   @doc """

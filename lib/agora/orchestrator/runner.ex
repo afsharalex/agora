@@ -13,6 +13,9 @@ defmodule Agora.Orchestrator.Runner do
     * `:termination` (optional) — a termination condition function
     * `:max_turns` (optional, default `100`) — hard safety limit
     * `:name` (optional) — GenServer name registration
+    * `:cancel_token` (optional) — `%CancelToken{}` for cooperative cancellation
+    * `:context_policy` (optional) — `%ContextPolicy{}` for message compaction
+    * `:telemetry_metadata` (optional) — `map()` merged into telemetry event metadata
 
   ## Run Scope
 
@@ -36,7 +39,7 @@ defmodule Agora.Orchestrator.Runner do
 
   use GenServer
 
-  alias Agora.{Agent, Error, Message}
+  alias Agora.{Agent, CancelToken, Error, Message}
 
   @default_max_turns 100
 
@@ -111,7 +114,10 @@ defmodule Agora.Orchestrator.Runner do
          :ok <- validate_agents_map(agents),
          :ok <- validate_orchestrator_opts(Keyword.get(opts, :orchestrator_opts, [])),
          :ok <- validate_termination(Keyword.get(opts, :termination)),
-         :ok <- validate_max_turns(Keyword.get(opts, :max_turns, @default_max_turns)) do
+         :ok <- validate_max_turns(Keyword.get(opts, :max_turns, @default_max_turns)),
+         :ok <- validate_cancel_token(Keyword.get(opts, :cancel_token)),
+         :ok <- validate_context_policy(Keyword.get(opts, :context_policy)),
+         :ok <- validate_telemetry_metadata(Keyword.get(opts, :telemetry_metadata, %{})) do
       {:ok,
        %{
          orchestrator: orchestrator,
@@ -119,7 +125,10 @@ defmodule Agora.Orchestrator.Runner do
          orchestrator_opts: Keyword.get(opts, :orchestrator_opts, []),
          termination: Keyword.get(opts, :termination),
          max_turns: Keyword.get(opts, :max_turns, @default_max_turns),
-         runner_name: Keyword.get(opts, :runner_name)
+         runner_name: Keyword.get(opts, :runner_name),
+         cancel_token: Keyword.get(opts, :cancel_token),
+         context_policy: Keyword.get(opts, :context_policy),
+         telemetry_metadata: Keyword.get(opts, :telemetry_metadata, %{})
        }}
     end
   end
@@ -185,6 +194,23 @@ defmodule Agora.Orchestrator.Runner do
   defp validate_max_turns(_),
     do: {:error, Error.new(:config_error, ":max_turns must be a positive integer")}
 
+  defp validate_cancel_token(nil), do: :ok
+  defp validate_cancel_token(%CancelToken{}), do: :ok
+
+  defp validate_cancel_token(_),
+    do: {:error, Error.new(:config_error, ":cancel_token must be a %CancelToken{} or nil")}
+
+  defp validate_context_policy(nil), do: :ok
+  defp validate_context_policy(%Agora.ContextPolicy{}), do: :ok
+
+  defp validate_context_policy(_),
+    do: {:error, Error.new(:config_error, ":context_policy must be a %ContextPolicy{} or nil")}
+
+  defp validate_telemetry_metadata(meta) when is_map(meta), do: :ok
+
+  defp validate_telemetry_metadata(_),
+    do: {:error, Error.new(:config_error, ":telemetry_metadata must be a map")}
+
   defp do_init(validated) do
     %{
       orchestrator: orchestrator,
@@ -192,7 +218,10 @@ defmodule Agora.Orchestrator.Runner do
       orchestrator_opts: orchestrator_opts,
       termination: termination,
       max_turns: max_turns,
-      runner_name: runner_name
+      runner_name: runner_name,
+      cancel_token: cancel_token,
+      context_policy: context_policy,
+      telemetry_metadata: telemetry_metadata
     } = validated
 
     case start_agents(agents) do
@@ -212,7 +241,10 @@ defmodule Agora.Orchestrator.Runner do
                termination: termination,
                max_turns: max_turns,
                status: :idle,
-               runner_name: runner_name
+               runner_name: runner_name,
+               cancel_token: cancel_token,
+               context_policy: context_policy,
+               telemetry_metadata: telemetry_metadata
              }}
 
           {:error, error} ->
@@ -322,39 +354,45 @@ defmodule Agora.Orchestrator.Runner do
       orchestrator_state: orch_state,
       termination: termination,
       max_turns: max_turns,
-      history: history
+      history: history,
+      cancel_token: cancel_token
     } = state
 
-    context = %{original_input: input, history: history}
+    # Check cancellation before anything else
+    if cancel_token && CancelToken.cancelled?(cancel_token) do
+      {{:error, Error.new(:cancelled, "Execution cancelled")}, state}
+    else
+      context = %{original_input: input, history: history}
 
-    # Check termination condition first — a valid termination at the boundary
-    # should succeed rather than being preempted by the hard safety limit.
-    case check_termination(termination, context) do
-      {:done, msg} ->
-        {{:ok, msg}, state}
+      # Check termination condition first — a valid termination at the boundary
+      # should succeed rather than being preempted by the hard safety limit.
+      case check_termination(termination, context) do
+        {:done, msg} ->
+          {{:ok, msg}, state}
 
-      :continue ->
-        # Check max_turns safety limit after termination
-        if turn >= max_turns do
-          error =
-            Error.new(
-              :orchestration_error,
-              "Reached maximum turns (#{max_turns})",
-              %{max_turns: max_turns, turns: turn}
-            )
+        :continue ->
+          # Check max_turns safety limit after termination
+          if turn >= max_turns do
+            error =
+              Error.new(
+                :orchestration_error,
+                "Reached maximum turns (#{max_turns})",
+                %{max_turns: max_turns, turns: turn}
+              )
 
-          {{:error, error}, state}
-        else
-          # Ask orchestrator what to do next
-          case orchestrator.next(orch_state, context) do
-            {:done, result, new_orch_state} ->
-              {{:ok, result}, %{state | orchestrator_state: new_orch_state}}
+            {{:error, error}, state}
+          else
+            # Ask orchestrator what to do next
+            case orchestrator.next(orch_state, context) do
+              {:done, result, new_orch_state} ->
+                {{:ok, result}, %{state | orchestrator_state: new_orch_state}}
 
-            {:next, agent_name, input_msg, new_orch_state} ->
-              state = %{state | orchestrator_state: new_orch_state}
-              run_agent_step(input, turn, agent_name, input_msg, state)
+              {:next, agent_name, input_msg, new_orch_state} ->
+                state = %{state | orchestrator_state: new_orch_state}
+                run_agent_step(input, turn, agent_name, input_msg, state)
+            end
           end
-        end
+      end
     end
   end
 
@@ -487,18 +525,22 @@ defmodule Agora.Orchestrator.Runner do
   # --- Private: Telemetry ---
 
   defp telemetry_metadata(state) do
-    %{
+    base = %{
       orchestrator: state.orchestrator,
       name: state.runner_name
     }
+
+    Map.merge(state.telemetry_metadata, base)
   end
 
   defp step_metadata(state, agent_name, step) do
-    %{
+    base = %{
       orchestrator: state.orchestrator,
       agent: agent_name,
       step: step
     }
+
+    Map.merge(state.telemetry_metadata, base)
   end
 
   # --- Private: Crash formatting ---

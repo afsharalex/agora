@@ -20,6 +20,7 @@ defmodule Agora.Error do
           | :orchestration_error
           | :workflow_error
           | :streaming_error
+          | :cancelled
           | :unknown
 
   @type t :: %__MODULE__{
@@ -42,6 +43,7 @@ defmodule Agora.Error do
     :orchestration_error,
     :workflow_error,
     :streaming_error,
+    :cancelled,
     :unknown
   ]
 

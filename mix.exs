@@ -72,7 +72,8 @@ defmodule Agora.MixProject do
         {"guides/tools.md", title: "Tools"},
         {"guides/middleware.md", title: "Middleware"},
         {"guides/orchestration.md", title: "Orchestration"},
-        {"guides/workflows.md", title: "Workflows"}
+        {"guides/workflows.md", title: "Workflows"},
+        {"guides/execution-modes.md", title: "Execution Modes"}
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/
@@ -87,7 +88,10 @@ defmodule Agora.MixProject do
           Agora.AgentConfig,
           Agora.Message,
           Agora.Error,
-          Agora.Config
+          Agora.Config,
+          Agora.Execution,
+          Agora.CancelToken,
+          Agora.ContextPolicy
         ],
         Providers: [
           Agora.Provider,
@@ -120,7 +124,8 @@ defmodule Agora.MixProject do
           Agora.Orchestrator.Single,
           Agora.Orchestrator.RoundRobin,
           Agora.Orchestrator.Supervisor,
-          Agora.Orchestrator.ChatRoom
+          Agora.Orchestrator.ChatRoom,
+          Agora.Orchestrator.GroupChat
         ],
         Memory: [
           Agora.Memory,
