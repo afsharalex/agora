@@ -288,6 +288,22 @@ defmodule Agora.ExecutionWorkflowStreamTest do
       assert_receive {:telemetry_meta, ^test_ref, metadata}, 1000
       assert metadata.custom_key == :test_value
       assert %ModeEvent{} = metadata.event
+      # Event struct itself also carries metadata
+      assert metadata.event.metadata.custom_key == :test_value
+    end
+
+    test "workflow ModeEvent structs carry telemetry_metadata in event.metadata" do
+      {:ok, stream} =
+        Agora.run_mode_stream(:sequential, [
+          {:a, fn _r -> {:ok, 1} end}
+        ], telemetry_metadata: %{trace_id: "abc-123"})
+
+      events = Enum.to_list(stream)
+
+      for event <- events do
+        assert %ModeEvent{} = event
+        assert event.metadata.trace_id == "abc-123"
+      end
     end
 
     test "EventBusBridge receives workflow stream events" do

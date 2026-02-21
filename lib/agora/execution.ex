@@ -330,21 +330,21 @@ defmodule Agora.Execution do
     end
 
     try do
-      emit.(ModeEvent.mode_started(mode, :term, 0))
+      emit.(ModeEvent.mode_started(mode, :term, 0, telemetry_metadata))
 
       on_event = fn event ->
-        mode_event = build_workflow_mode_event(mode, event)
+        mode_event = build_workflow_mode_event(mode, event, telemetry_metadata)
         emit.(mode_event)
       end
 
       result = run_workflow(mode, workflow_input, Keyword.put(opts, :on_event, on_event))
 
       case result do
-        {:ok, _} -> emit.(ModeEvent.mode_completed(mode, 0))
-        {:error, error} -> emit.(ModeEvent.mode_failed(mode, error, 0))
+        {:ok, _} -> emit.(ModeEvent.mode_completed(mode, 0, telemetry_metadata))
+        {:error, error} -> emit.(ModeEvent.mode_failed(mode, error, 0, telemetry_metadata))
       end
 
-      emit.(ModeEvent.done())
+      emit.(ModeEvent.done(telemetry_metadata))
     rescue
       e ->
         error =
@@ -362,12 +362,12 @@ defmodule Agora.Execution do
     end
   end
 
-  defp build_workflow_mode_event(mode, %{type: :step_started, step_id: step_id}) do
-    ModeEvent.workflow_step_started(mode, step_id)
+  defp build_workflow_mode_event(mode, %{type: :step_started, step_id: step_id}, metadata) do
+    ModeEvent.workflow_step_started(mode, step_id, metadata)
   end
 
-  defp build_workflow_mode_event(mode, %{type: :step_completed, step_id: step_id, result: result}) do
-    ModeEvent.workflow_step_completed(mode, step_id, result)
+  defp build_workflow_mode_event(mode, %{type: :step_completed, step_id: step_id, result: result}, metadata) do
+    ModeEvent.workflow_step_completed(mode, step_id, result, metadata)
   end
 
   defp build_runner_opts(orchestrator_mod, opts) do
