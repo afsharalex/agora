@@ -301,6 +301,8 @@ Message.new(:assistant, "Routing to billing.",
 HANDOFF:billing:Customer needs refund help
 ```
 
+The directive must appear at the very start of the response content — leading whitespace or prose before `HANDOFF:` will cause it to be treated as task completion. Use metadata handoff when the response includes other content alongside the handoff instruction.
+
 When a custom parser is configured, it fully replaces the default directive format — there is no fallback.
 
 ### Options
