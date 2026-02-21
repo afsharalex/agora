@@ -719,6 +719,40 @@ defmodule Agora.Orchestrator.PlanTest do
       assert err_msg =~ "invalid shape"
     end
 
+    test "custom parse_plan with unknown assignee → error at validation" do
+      custom_fn = fn _content, _lookup ->
+        {:ok, [%{id: 1, description: "Do work", assignee: :nonexistent, deps: []}]}
+      end
+
+      {:ok, state} = Plan.init(init_config(%{parse_plan: custom_fn}))
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      msg = Message.assistant("any plan content")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "unknown worker"
+      assert err_msg =~ "nonexistent"
+    end
+
+    test "custom parse_plan assigning planner as worker → error at validation" do
+      custom_fn = fn _content, _lookup ->
+        {:ok, [%{id: 1, description: "Do work", assignee: :planner, deps: []}]}
+      end
+
+      {:ok, state} = Plan.init(init_config(%{parse_plan: custom_fn}))
+      {:next, :planner, _prompt, state} = Plan.next(state, make_context())
+
+      msg = Message.assistant("any plan content")
+
+      {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
+        Plan.handle_result(state, :planner, {:ok, msg})
+
+      assert err_msg =~ "unknown worker"
+      assert err_msg =~ "planner"
+    end
+
     test "malformed dependency IDs are rejected" do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())

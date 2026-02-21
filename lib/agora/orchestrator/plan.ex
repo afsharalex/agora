@@ -467,6 +467,7 @@ defmodule Agora.Orchestrator.Plan do
     id_set = MapSet.new(ids)
 
     with :ok <- validate_no_duplicates(ids, id_set),
+         :ok <- validate_assignees(steps, state),
          :ok <- validate_deps_exist(steps, id_set),
          :ok <- validate_no_self_deps(steps),
          :ok <- validate_no_cycles(steps),
@@ -485,6 +486,24 @@ defmodule Agora.Orchestrator.Plan do
        Error.new(
          :orchestration_error,
          "Plan contains duplicate step IDs: #{inspect(Enum.uniq(dupes))}"
+       )}
+    end
+  end
+
+  defp validate_assignees(steps, state) do
+    worker_set = MapSet.new(state.agents)
+
+    invalid =
+      Enum.find(steps, fn step -> not MapSet.member?(worker_set, step.assignee) end)
+
+    if is_nil(invalid) do
+      :ok
+    else
+      {:error,
+       Error.new(
+         :orchestration_error,
+         "Step #{invalid.id} assigned to unknown worker: #{inspect(invalid.assignee)}",
+         %{assignee: invalid.assignee, known_workers: state.agents}
        )}
     end
   end
