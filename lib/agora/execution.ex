@@ -51,7 +51,7 @@ defmodule Agora.Execution do
 
   """
 
-  alias Agora.{ContextPolicy, Error, Message}
+  alias Agora.{ContextPolicy, Error, Message, ModeEvent}
   alias Agora.Workflow.Patterns
 
   @orchestrator_modes %{
@@ -93,6 +93,10 @@ defmodule Agora.Execution do
   @spec run_mode_stream(atom(), String.t() | Message.t(), keyword()) ::
           {:ok, Enumerable.t()} | {:error, Error.t()}
   def run_mode_stream(mode, input, opts \\ [])
+
+  def run_mode_stream(mode, input, opts) when mode in @workflow_modes do
+    stream_workflow(mode, input, opts)
+  end
 
   def run_mode_stream(mode, input, opts) do
     with {:ok, orchestrator_mod} <- resolve_orchestrator(mode),
@@ -273,6 +277,63 @@ defmodule Agora.Execution do
           "Failed to start runner: #{inspect(reason)}"
         )
     end
+  end
+
+  defp stream_workflow(mode, workflow_input, opts) do
+    caller = self()
+    stream_ref = make_ref()
+
+    {:ok, task_pid} =
+      Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
+        streaming_workflow_run(mode, workflow_input, opts, caller, stream_ref)
+      end)
+
+    stream = Agora.Stream.new(stream_ref, task_pid, caller, error_fn: &ModeEvent.error/1)
+    {:ok, stream}
+  end
+
+  defp streaming_workflow_run(mode, workflow_input, opts, caller, ref) do
+    emit = fn event -> send(caller, {Agora.Stream, ref, event}) end
+
+    try do
+      emit.(ModeEvent.mode_started(mode, :term, 0))
+
+      on_event = fn event ->
+        mode_event = build_workflow_mode_event(mode, event)
+        emit.(mode_event)
+      end
+
+      result = run_workflow(mode, workflow_input, Keyword.put(opts, :on_event, on_event))
+
+      case result do
+        {:ok, _} -> emit.(ModeEvent.mode_completed(mode, 0))
+        {:error, error} -> emit.(ModeEvent.mode_failed(mode, error, 0))
+      end
+
+      emit.(ModeEvent.done())
+    rescue
+      e ->
+        error =
+          Error.new(:streaming_error, "Workflow streaming crashed: #{Exception.message(e)}")
+
+        emit.(ModeEvent.error(error))
+        emit.(ModeEvent.done())
+    catch
+      kind, value ->
+        error =
+          Error.new(:streaming_error, "Workflow streaming #{kind}: #{inspect(value)}")
+
+        emit.(ModeEvent.error(error))
+        emit.(ModeEvent.done())
+    end
+  end
+
+  defp build_workflow_mode_event(mode, %{type: :step_started, step_id: step_id}) do
+    ModeEvent.workflow_step_started(mode, step_id)
+  end
+
+  defp build_workflow_mode_event(mode, %{type: :step_completed, step_id: step_id, result: result}) do
+    ModeEvent.workflow_step_completed(mode, step_id, result)
   end
 
   defp build_runner_opts(orchestrator_mod, opts) do

@@ -90,6 +90,7 @@ defmodule Agora.MixProject do
           Agora.Error,
           Agora.Config,
           Agora.Execution,
+          Agora.ModeEvent,
           Agora.CancelToken,
           Agora.ContextPolicy
         ],
@@ -153,6 +154,7 @@ defmodule Agora.MixProject do
         ],
         Observability: [
           Agora.Telemetry,
+          Agora.Telemetry.EventBusBridge,
           Agora.EventBus
         ]
       ]

@@ -38,6 +38,8 @@ defmodule Agora.Workflow.Executor do
 
   """
 
+  require Logger
+
   alias Agora.{AgentConfig, CancelToken, ContextPolicy, Error, Workflow}
   alias Agora.Workflow.{CheckpointStore, Step}
 
@@ -88,7 +90,8 @@ defmodule Agora.Workflow.Executor do
       supervisor: Keyword.get(opts, :supervisor, @default_supervisor),
       cancel_token: Keyword.get(opts, :cancel_token),
       context_policy: Keyword.get(opts, :context_policy),
-      telemetry_metadata: Keyword.get(opts, :telemetry_metadata, %{})
+      telemetry_metadata: Keyword.get(opts, :telemetry_metadata, %{}),
+      on_event: Keyword.get(opts, :on_event)
     }
 
     with {:ok, checkpoint_state} <- init_checkpoint(checkpoint_config),
@@ -322,24 +325,37 @@ defmodule Agora.Workflow.Executor do
   # --- Step execution with retry ---
 
   defp execute_step(step, results, run_ctx) do
-    Agora.Telemetry.span(
-      [:agora, :workflow, :step],
-      Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name}),
-      fn ->
-        result = execute_with_retry(step, results, step.retry, run_ctx)
+    safe_on_event(run_ctx, %{type: :step_started, step_id: step.id})
 
-        stop_meta =
-          Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name})
+    result =
+      Agora.Telemetry.span(
+        [:agora, :workflow, :step],
+        Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name}),
+        fn ->
+          result = execute_with_retry(step, results, step.retry, run_ctx)
 
-        stop_meta =
-          case result do
-            {:error, error} -> Map.put(stop_meta, :error, error)
-            _ -> stop_meta
-          end
+          stop_meta =
+            Map.merge(run_ctx.telemetry_metadata, %{step_id: step.id, step_name: step.name})
 
-        {result, stop_meta}
+          stop_meta =
+            case result do
+              {:error, error} -> Map.put(stop_meta, :error, error)
+              _ -> stop_meta
+            end
+
+          {result, stop_meta}
+        end
+      )
+
+    step_result =
+      case result do
+        {:ok, _} -> :ok
+        {:error, _} -> :error
       end
-    )
+
+    safe_on_event(run_ctx, %{type: :step_completed, step_id: step.id, result: step_result})
+
+    result
   end
 
   defp execute_with_retry(step, results, retries_left, run_ctx) do
@@ -434,7 +450,19 @@ defmodule Agora.Workflow.Executor do
   defp maybe_inject_context_policy(config, %ContextPolicy{} = policy) do
     compaction_mw = fn ctx, next ->
       if ctx.hook == :before_provider_call do
-        next.(%{ctx | messages: ContextPolicy.apply(policy, ctx.messages)})
+        before_count = length(ctx.messages)
+        compacted = ContextPolicy.apply(policy, ctx.messages)
+        after_count = length(compacted)
+
+        if after_count < before_count do
+          Agora.Telemetry.emit(
+            [:agora, :mode, :context_compacted],
+            %{system_time: System.system_time()},
+            %{strategy: policy.strategy, before: before_count, after: after_count}
+          )
+        end
+
+        next.(%{ctx | messages: compacted})
       else
         next.(ctx)
       end
@@ -521,6 +549,23 @@ defmodule Agora.Workflow.Executor do
 
         {results, checkpoint, error}
     end)
+  end
+
+  # --- on_event callback (safe-wrapped) ---
+
+  defp safe_on_event(%{on_event: nil}, _event), do: :ok
+
+  defp safe_on_event(%{on_event: on_event}, event) do
+    on_event.(event)
+    :ok
+  rescue
+    e ->
+      Logger.warning("on_event callback raised: #{Exception.message(e)}")
+      :ok
+  catch
+    kind, value ->
+      Logger.warning("on_event callback #{kind}: #{inspect(value)}")
+      :ok
   end
 
   # --- Option validation ---

@@ -445,3 +445,109 @@ Agora.run_mode(:group_chat, "Topic", agents: agents)
 ### Existing APIs
 
 `Agora.run/2`, `Agora.start_runner/2`, and `Agora.run_workflow/2` remain unchanged. `run_mode/3` is additive — use whichever API suits your needs.
+
+## Streaming Execution
+
+`run_mode_stream/3` returns an enumerable stream of `ModeEvent` structs, providing real-time visibility into execution progress. Both orchestrator and workflow modes are supported.
+
+### Orchestrator Mode Streaming
+
+```elixir
+{:ok, stream} = Agora.run_mode_stream(:round_robin, "Discuss this topic",
+  agents: %{a: config_a, b: config_b},
+  termination: TerminationCondition.max_turns(3)
+)
+
+for event <- stream do
+  case event.type do
+    :mode_started -> IO.puts("Execution started")
+    :agent_selected -> IO.puts("Agent: #{event.data.agent}")
+    :step_started -> IO.puts("Step started: turn #{event.data.turn}")
+    :step_completed -> IO.puts("Step completed: #{event.data.result}")
+    :handoff -> IO.puts("Handoff: #{event.data.from} → #{event.data.to}")
+    :mode_completed -> IO.puts("Done in #{event.data.turns} turns")
+    :done -> :ok
+    _ -> :ok
+  end
+end
+```
+
+### Workflow Mode Streaming
+
+```elixir
+{:ok, stream} = Agora.run_mode_stream(:sequential, [
+  {:fetch, &fetch_data/1},
+  {:transform, &transform/1}
+])
+
+for event <- stream do
+  case event.type do
+    :step_started -> IO.puts("Step #{event.data.step_id} started")
+    :step_completed -> IO.puts("Step #{event.data.step_id}: #{event.data.result}")
+    :mode_completed -> IO.puts("Workflow complete")
+    _ -> :ok
+  end
+end
+```
+
+### ModeEvent Types
+
+| Type | Data | Source |
+|------|------|--------|
+| `:mode_started` | `%{input_type, input_size}` | Runner/Executor |
+| `:agent_selected` | `%{agent, turn}` | Runner (orchestrator modes) |
+| `:step_started` | `%{agent, turn}` or `%{step_id}` | Runner/Executor |
+| `:step_completed` | `%{agent, turn, result}` or `%{step_id, result}` | Runner/Executor |
+| `:handoff` | `%{from, to, message}` | Handoff orchestrator |
+| `:replan` | `%{replan_count, reason}` | Plan orchestrator |
+| `:mode_completed` | `%{turns}` | Runner/Executor |
+| `:mode_failed` | `%{error, turns}` | Runner/Executor |
+| `:mode_cancelled` | `%{boundary, turn}` | Runner |
+| `:done` | `%{}` | Terminal signal |
+| `:error` | `%Error{}` | Stream crash/timeout |
+
+### Early Halt
+
+Streams support early termination via `Enum.take/2`:
+
+```elixir
+first_3 = Enum.take(stream, 3)
+```
+
+The underlying Runner or workflow task is automatically cleaned up.
+
+### Parallel/DAG Step Ordering
+
+For `:parallel` and `:dag` workflow modes, step events may arrive in nondeterministic order since steps within the same level execute concurrently.
+
+## Observability
+
+### Telemetry Events
+
+Mode-level telemetry events are emitted alongside existing orchestrator and workflow events:
+
+| Event | Description |
+|-------|-------------|
+| `[:agora, :mode, :event]` | Each ModeEvent emitted during streaming |
+| `[:agora, :mode, :context_compacted]` | Messages reduced by ContextPolicy |
+
+### EventBus Bridge
+
+`Agora.Telemetry.EventBusBridge` forwards mode telemetry events to the EventBus for pub/sub consumption:
+
+```elixir
+# Attach the bridge (idempotent)
+Agora.Telemetry.EventBusBridge.attach(topic: :mode_events)
+
+# Subscribe to mode events
+Agora.EventBus.subscribe(:mode_events)
+
+# Events arrive as {Agora.EventBus, :mode_events, %ModeEvent{}}
+receive do
+  {Agora.EventBus, :mode_events, event} ->
+    IO.inspect(event.type)
+end
+
+# Detach when done (idempotent)
+Agora.Telemetry.EventBusBridge.detach()
+```
