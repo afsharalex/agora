@@ -101,6 +101,10 @@ defmodule Agora.Agent.Lifecycle do
     e -> {:error, Exception.message(e)}
   end
 
+  def validate(other) do
+    {:error, "expected %Agora.Agent.Lifecycle{}, got: #{inspect(other)}"}
+  end
+
   @doc """
   Creates a validated lifecycle configuration, raising on invalid input.
 

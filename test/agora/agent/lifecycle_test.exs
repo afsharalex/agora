@@ -268,6 +268,16 @@ defmodule Agora.Agent.LifecycleTest do
 
       assert {:error, _reason} = Lifecycle.validate(invalid)
     end
+
+    test "returns {:error, reason} for nil input" do
+      assert {:error, reason} = Lifecycle.validate(nil)
+      assert reason =~ "expected %Agora.Agent.Lifecycle{}"
+    end
+
+    test "returns {:error, reason} for non-struct input" do
+      assert {:error, reason} = Lifecycle.validate(%{initial_state: :a})
+      assert reason =~ "expected %Agora.Agent.Lifecycle{}"
+    end
   end
 
   describe "StateConfig" do

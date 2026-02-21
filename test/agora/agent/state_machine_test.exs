@@ -403,6 +403,48 @@ defmodule Agora.Agent.StateMachineTest do
       Process.sleep(150)
       assert {:ok, :timed_out} = Agent.get_lifecycle_state(pid)
     end
+
+    test "timeout re-arms after streaming error" do
+      config =
+        lifecycle_config(
+          [
+            initial_state: :waiting,
+            states: %{
+              waiting: %StateConfig{},
+              timed_out: %StateConfig{}
+            },
+            transitions: [
+              # Use a longer timeout so we can control timing
+              %{from: :waiting, to: :timed_out, trigger: {:state_timeout, 200}, guard: nil}
+            ]
+          ],
+          provider_opts: [
+            echo_mode: :error,
+            echo_error_type: :provider_error,
+            echo_error_message: "stream error"
+          ]
+        )
+
+      pid = start_agent(config)
+      assert {:ok, :waiting} = Agent.get_lifecycle_state(pid)
+
+      # Stream run will fail immediately due to error mode.
+      # This consumes the one-shot timeout (suppressed during :streaming status),
+      # but stream_complete error path should re-arm it.
+      {:ok, stream} = Agent.stream_run(pid, "test")
+
+      # Drain stream events
+      _events = Enum.to_list(stream)
+
+      # Wait a moment for stream_complete to be processed
+      Process.sleep(50)
+      assert {:ok, :waiting} = Agent.get_lifecycle_state(pid)
+      assert :idle = Agent.get_status(pid)
+
+      # Now wait for the re-armed timeout to fire
+      Process.sleep(300)
+      assert {:ok, :timed_out} = Agent.get_lifecycle_state(pid)
+    end
   end
 
   describe "guard functions" do

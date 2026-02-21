@@ -335,7 +335,7 @@ defmodule Agora.Agent.StateMachine do
         :info,
         {:stream_complete, ref, start_time, _state_name, _old_messages,
          {:error, error, final_messages}},
-        _current_state,
+        current_state,
         %{stream_info: %{ref: ref}} = data
       ) do
     Process.demonitor(data.stream_info.monitor_ref, [:flush])
@@ -347,13 +347,14 @@ defmodule Agora.Agent.StateMachine do
       Map.put(telemetry_meta, :error, error)
     )
 
-    {:keep_state, %{data | status: :idle, messages: final_messages, stream_info: nil}}
+    actions = timeout_actions(current_state, data.lifecycle)
+    {:keep_state, %{data | status: :idle, messages: final_messages, stream_info: nil}, actions}
   end
 
   def handle_event(
         :info,
         {:DOWN, mref, :process, pid, _reason},
-        _state_name,
+        current_state,
         %{stream_info: %{monitor_ref: mref, task_pid: pid}} = data
       ) do
     telemetry_meta = telemetry_metadata(data.config)
@@ -367,7 +368,8 @@ defmodule Agora.Agent.StateMachine do
       Map.put(telemetry_meta, :error, Error.new(:streaming_error, "Stream task crashed"))
     )
 
-    {:keep_state, %{data | status: :idle, stream_info: nil}}
+    actions = timeout_actions(current_state, data.lifecycle)
+    {:keep_state, %{data | status: :idle, stream_info: nil}, actions}
   end
 
   # Ignore stray messages
