@@ -3,7 +3,7 @@
 # Demonstrates delegation orchestration using Agora.supervisor/4.
 # A manager agent delegates tasks to specialist workers via DELEGATE:name:message.
 #
-# Run with: mix run examples/supervisor_mode.exs
+# Run with: mix run examples/supervisor.exs
 
 alias Agora.Message
 

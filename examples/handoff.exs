@@ -3,7 +3,7 @@
 # Demonstrates decentralized baton-passing orchestration using Agora.handoff/3.
 # A triage agent routes customer requests to the appropriate specialist.
 #
-# Run with: mix run examples/handoff_mode.exs
+# Run with: mix run examples/handoff.exs
 
 alias Agora.Message
 

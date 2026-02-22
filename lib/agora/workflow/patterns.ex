@@ -15,7 +15,21 @@ defmodule Agora.Workflow.Patterns do
   Where `id` is an atom, `handler` is a 1-arity function or `AgentConfig`,
   and `opts` is a keyword list of step options.
 
-  ## Examples
+  ## Agent Examples
+
+      alias Agora.Workflow.AgentStep
+
+      # Agent sequential pipeline
+      {:ok, workflow} = Patterns.sequential([
+        AgentStep.spec(:research, researcher),
+        AgentStep.spec(:writing, writer,
+          input_mapper: fn r ->
+            {:ok, msg} = r[:research]
+            "Write about: \#{msg.content}"
+          end)
+      ])
+
+  ## Function Examples
 
       # Linear chain
       {:ok, workflow} = Patterns.sequential([

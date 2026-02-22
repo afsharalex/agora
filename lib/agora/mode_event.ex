@@ -1,10 +1,11 @@
 defmodule Agora.ModeEvent do
   @moduledoc """
-  Represents a single event in a mode-level execution stream.
+  Represents a single event in an orchestration-level execution stream.
 
-  Mode events are orchestration-level events emitted by the Runner and Executor
-  during `run_mode_stream/3` execution. They provide visibility into intermediate
-  progress: which agent was selected, when steps start/complete, handoffs, replans, etc.
+  Mode events are orchestration-level events emitted by `Agora.Orchestrator.Runner`
+  during both synchronous and streaming orchestration execution. They provide
+  visibility into intermediate progress: which agent was selected, when steps
+  start/complete, handoffs, replans, etc.
 
   ## Event Types
 
@@ -12,14 +13,13 @@ defmodule Agora.ModeEvent do
   |---|---|---|
   | `:mode_started` | `%{input_type: atom(), input_size: non_neg_integer()}` | Execution began |
   | `:agent_selected` | `%{agent: atom(), turn: integer()}` | Orchestrator selected an agent |
-  | `:step_started` | `%{agent: atom(), turn: integer()}` or `%{step_id: atom()}` | Step execution began |
-  | `:step_completed` | `%{agent: atom(), turn: integer(), result: atom()}` or `%{step_id: atom(), result: ...}` | Step execution completed |
+  | `:step_started` | `%{agent: atom(), turn: integer()}` | Step execution began |
+  | `:step_completed` | `%{agent: atom(), turn: integer(), result: atom()}` | Step execution completed |
   | `:handoff` | `%{from: atom(), to: atom(), message: String.t()}` | Handoff between agents |
   | `:replan` | `%{replan_count: integer(), reason: String.t()}` | Plan orchestrator replanning |
   | `:mode_completed` | `%{turns: integer()}` | Execution completed successfully |
   | `:mode_failed` | `%{error: Error.t(), turns: integer()}` | Execution failed |
   | `:mode_cancelled` | `%{boundary: atom(), turn: integer()}` | Execution cancelled |
-  | `:context_compacted` | `%{strategy: atom(), before: integer(), after: integer()}` | Messages compacted |
   | `:done` | `%{}` | Terminal signal for stream (normal completion) |
   | `:error` | `%Error{}` | Terminal signal for stream (crash/timeout) |
 
@@ -42,7 +42,6 @@ defmodule Agora.ModeEvent do
           | :mode_completed
           | :mode_failed
           | :mode_cancelled
-          | :context_compacted
           | :done
           | :error
 
@@ -93,18 +92,6 @@ defmodule Agora.ModeEvent do
     }
   end
 
-  @doc "Creates a step_started event for workflow modes."
-  @spec workflow_step_started(atom(), atom(), map()) :: t()
-  def workflow_step_started(mode, step_id, metadata \\ %{}) do
-    %__MODULE__{
-      type: :step_started,
-      mode: mode,
-      data: %{step_id: step_id},
-      timestamp: System.system_time(),
-      metadata: metadata
-    }
-  end
-
   @doc "Creates a step_completed event for orchestrator modes."
   @spec step_completed(atom(), atom(), non_neg_integer(), :ok | :error, map()) :: t()
   def step_completed(mode, agent, turn, result, metadata \\ %{}) do
@@ -112,18 +99,6 @@ defmodule Agora.ModeEvent do
       type: :step_completed,
       mode: mode,
       data: %{agent: agent, turn: turn, result: result},
-      timestamp: System.system_time(),
-      metadata: metadata
-    }
-  end
-
-  @doc "Creates a step_completed event for workflow modes."
-  @spec workflow_step_completed(atom(), atom(), :ok | :error | :skipped, map()) :: t()
-  def workflow_step_completed(mode, step_id, result, metadata \\ %{}) do
-    %__MODULE__{
-      type: :step_completed,
-      mode: mode,
-      data: %{step_id: step_id, result: result},
       timestamp: System.system_time(),
       metadata: metadata
     }
@@ -184,18 +159,6 @@ defmodule Agora.ModeEvent do
       type: :mode_cancelled,
       mode: mode,
       data: %{boundary: boundary, turn: turn},
-      timestamp: System.system_time(),
-      metadata: metadata
-    }
-  end
-
-  @doc "Creates a context_compacted event."
-  @spec context_compacted(atom(), atom(), non_neg_integer(), non_neg_integer(), map()) :: t()
-  def context_compacted(mode, strategy, before_count, after_count, metadata \\ %{}) do
-    %__MODULE__{
-      type: :context_compacted,
-      mode: mode,
-      data: %{strategy: strategy, before: before_count, after: after_count},
       timestamp: System.system_time(),
       metadata: metadata
     }

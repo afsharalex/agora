@@ -3,7 +3,7 @@
 # Demonstrates fan-out/fan-in using the Workflow Patterns API.
 # A source step feeds two branches that run concurrently, then a sink merges results.
 #
-# Run with: mix run examples/parallel_mode.exs
+# Run with: mix run examples/parallel_workflow.exs
 
 alias Agora.Workflow.Patterns
 

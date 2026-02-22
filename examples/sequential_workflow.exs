@@ -3,7 +3,7 @@
 # Demonstrates a linear pipeline using the Workflow Patterns API.
 # Steps execute in order, each receiving the accumulated results map.
 #
-# Run with: mix run examples/sequential_mode.exs
+# Run with: mix run examples/sequential_workflow.exs
 
 alias Agora.Workflow.Patterns
 

@@ -36,14 +36,6 @@ defmodule Agora.ModeEventTest do
     end
   end
 
-  describe "workflow_step_started/3" do
-    test "creates workflow step event" do
-      event = ModeEvent.workflow_step_started(:dag, :fetch_data)
-      assert event.type == :step_started
-      assert event.data == %{step_id: :fetch_data}
-    end
-  end
-
   describe "step_completed/5" do
     test "creates orchestrator step completed event" do
       event = ModeEvent.step_completed(:single, :worker, 0, :ok)
@@ -54,14 +46,6 @@ defmodule Agora.ModeEventTest do
     test "creates error step completed event" do
       event = ModeEvent.step_completed(:single, :worker, 1, :error)
       assert event.data.result == :error
-    end
-  end
-
-  describe "workflow_step_completed/4" do
-    test "creates workflow step completed event" do
-      event = ModeEvent.workflow_step_completed(:sequential, :transform, :ok)
-      assert event.type == :step_completed
-      assert event.data == %{step_id: :transform, result: :ok}
     end
   end
 
@@ -106,14 +90,6 @@ defmodule Agora.ModeEventTest do
     end
   end
 
-  describe "context_compacted/5" do
-    test "creates context compacted event" do
-      event = ModeEvent.context_compacted(:single, :sliding_window, 50, 30)
-      assert event.type == :context_compacted
-      assert event.data == %{strategy: :sliding_window, before: 50, after: 30}
-    end
-  end
-
   describe "done/1" do
     test "creates terminal done event" do
       event = ModeEvent.done()
@@ -146,7 +122,6 @@ defmodule Agora.ModeEventTest do
         ModeEvent.mode_completed(:single, 1),
         ModeEvent.mode_failed(:single, error, 1),
         ModeEvent.mode_cancelled(:single, :before_step, 0),
-        ModeEvent.context_compacted(:single, :sliding_window, 10, 5),
         ModeEvent.done(),
         ModeEvent.error(error)
       ]

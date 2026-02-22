@@ -670,6 +670,19 @@ defmodule Agora.Workflow.DefinitionTest do
     end
   end
 
+  describe "agent handler via run:" do
+    test "AgentConfig step handler executes correctly" do
+      defmodule AgentHandlerModule do
+        use Agora.Workflow.Definition
+
+        step(:agent_step, run: Agora.AgentConfig.new!(provider: :echo, model: "echo"))
+      end
+
+      {:ok, results} = Agora.run_workflow(AgentHandlerModule)
+      assert {:ok, %Agora.Message{role: :assistant}} = results[:agent_step]
+    end
+  end
+
   # --- Integration ---
 
   describe "integration" do

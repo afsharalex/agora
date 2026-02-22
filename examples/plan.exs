@@ -4,7 +4,7 @@
 # A planner agent creates a structured plan, assigns steps to specialist workers,
 # and reviews results before declaring completion.
 #
-# Run with: mix run examples/plan_mode.exs
+# Run with: mix run examples/plan.exs
 
 alias Agora.Message
 

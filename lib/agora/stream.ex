@@ -1,6 +1,6 @@
 defmodule Agora.Stream do
   @moduledoc """
-  Enumerable wrapper for consuming streaming events from an agent or mode execution.
+  Enumerable wrapper for consuming streaming events from an agent or orchestration execution.
 
   Wraps the process-based streaming protocol into an `Enumerable` so callers
   can use standard `Enum` and `Stream` operations:
@@ -45,7 +45,7 @@ defmodule Agora.Stream do
 
     * `:error_fn` — function to create error events for `:DOWN` and timeout
       scenarios. Defaults to `&StreamEvent.error/1`. Pass `&ModeEvent.error/1`
-      for mode-level streams.
+      for orchestration-level streams.
   """
   @spec new(reference(), pid(), pid(), keyword()) :: t()
   def new(ref, pid, owner \\ self(), opts \\ []) do

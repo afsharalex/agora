@@ -290,6 +290,118 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     end
   end
 
+  describe "Runner.stream_run/2" do
+    test "stream task crash produces ModeEvent.error and runner recovers" do
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              Process.sleep(500)
+              {:ok, Agora.Message.assistant("Response")}
+            end
+          ]
+        )
+
+      {:ok, runner} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{agent: config}
+        )
+
+      {:ok, stream} = Runner.stream_run(runner, "Hello")
+
+      # Kill the streaming task
+      Process.exit(stream.pid, :kill)
+
+      events = Enum.to_list(stream)
+
+      # Should contain a ModeEvent.error (not StreamEvent.error)
+      assert Enum.any?(events, fn event ->
+               match?(%Agora.ModeEvent{type: :error}, event)
+             end)
+
+      # Runner should recover to idle
+      Process.sleep(100)
+      assert Runner.get_status(runner) == :idle
+
+      GenServer.stop(runner)
+    end
+
+    test "run while streaming returns busy error" do
+      test_pid = self()
+
+      slow_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              send(test_pid, :agent_running)
+              Process.sleep(300)
+              {:ok, Agora.Message.assistant("Response")}
+            end
+          ]
+        )
+
+      {:ok, runner} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{agent: slow_config}
+        )
+
+      {:ok, _stream} = Runner.stream_run(runner, "Hello")
+      assert_receive :agent_running, 5000
+
+      # Runner is busy streaming
+      assert {:error, %Error{type: :config_error}} = Runner.run(runner, "World")
+
+      # Also reject another stream_run
+      assert {:error, %Error{type: :config_error}} = Runner.stream_run(runner, "World")
+
+      # Wait for streaming to complete and clean up
+      Process.sleep(500)
+      GenServer.stop(runner)
+    end
+
+    test "stream_run while streaming returns busy error" do
+      test_pid = self()
+
+      slow_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              send(test_pid, :agent_running)
+              Process.sleep(300)
+              {:ok, Agora.Message.assistant("Response")}
+            end
+          ]
+        )
+
+      {:ok, runner} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{agent: slow_config}
+        )
+
+      {:ok, _stream} = Runner.stream_run(runner, "Hello")
+      assert_receive :agent_running, 5000
+
+      # Runner is busy streaming — reject another stream_run
+      assert {:error, %Error{type: :config_error}} = Runner.stream_run(runner, "World")
+
+      # Wait for streaming to complete and clean up
+      Process.sleep(500)
+      GenServer.stop(runner)
+    end
+  end
+
   describe "telemetry_metadata propagation" do
     test "custom metadata appears in mode events" do
       test_id = setup_mode_events()

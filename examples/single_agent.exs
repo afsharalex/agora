@@ -3,7 +3,7 @@
 # Demonstrates the simplest execution: a single agent, one turn.
 # Uses Agora.run/2 for one-shot agent execution.
 #
-# Run with: mix run examples/single_mode.exs
+# Run with: mix run examples/single_agent.exs
 
 config = Agora.agent(:echo, "echo",
   name: "helper",

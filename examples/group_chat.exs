@@ -3,7 +3,7 @@
 # Demonstrates shared-transcript deliberation using Agora.group_chat/3.
 # All agents see the full conversation history.
 #
-# Run with: mix run examples/group_chat_mode.exs
+# Run with: mix run examples/group_chat.exs
 
 alias Agora.Orchestrator.TerminationCondition
 

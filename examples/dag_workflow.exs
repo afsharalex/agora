@@ -3,7 +3,7 @@
 # Demonstrates complex DAG topology via the Builder API.
 # For simpler topologies, use Patterns.sequential/2 or Patterns.parallel/2.
 #
-# Run with: mix run examples/dag_mode.exs
+# Run with: mix run examples/dag_workflow.exs
 
 alias Agora.Workflow.Builder
 

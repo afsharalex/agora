@@ -1,6 +1,6 @@
 defmodule Agora.Telemetry.EventBusBridge do
   @moduledoc """
-  Forwards mode-level telemetry events to the EventBus for pub/sub consumption.
+  Forwards orchestration-level telemetry events to the EventBus for pub/sub consumption.
 
   This bridge is opt-in. When attached, it listens for `[:agora, :mode, :event]`
   telemetry events and broadcasts the contained `ModeEvent` to EventBus subscribers.

@@ -5,11 +5,23 @@ defmodule Agora.Workflow.Builder do
   Provides a pipeline-friendly API for defining steps and edges, with
   validation at build time (cycle detection, endpoint verification).
 
-  ## Example
+  ## Examples
 
-      alias Agora.Workflow.Builder
+      alias Agora.Workflow.{AgentStep, Builder}
 
-      # Linear pipeline with chain/2
+      # Agent-based pipeline
+      workflow =
+        Builder.new()
+        |> Builder.step(AgentStep.spec(:research, researcher))
+        |> Builder.step(AgentStep.spec(:writing, writer,
+          input_mapper: fn r ->
+            {:ok, msg} = r[:research]
+            "Write about: \#{msg.content}"
+          end))
+        |> Builder.sequence([:research, :writing])
+        |> Builder.build!()
+
+      # Function-based pipeline with chain/2
       workflow =
         Builder.new(step_defaults: [retry: 1])
         |> Builder.chain([

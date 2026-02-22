@@ -249,6 +249,105 @@ defmodule Agora.Execution.OptionPropagationTest do
     end
   end
 
+  describe "context_compacted telemetry" do
+    test "emits context_compacted event when messages are reduced" do
+      test_pid = self()
+      ref = make_ref()
+      marker = "compaction-#{inspect(ref)}"
+
+      :telemetry.attach(
+        "compaction-test-#{inspect(ref)}",
+        [:agora, :mode, :context_compacted],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:_test_marker] == marker do
+            send(test_pid, {:compacted, metadata})
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach("compaction-test-#{inspect(ref)}") end)
+
+      policy = ContextPolicy.new!(strategy: :sliding_window, window_size: 2)
+      counter = :counters.new(1, [:atomics])
+
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              count = :counters.get(counter, 1)
+              :counters.add(counter, 1, 1)
+              {:ok, Message.assistant("Response #{count}")}
+            end
+          ]
+        )
+
+      {:ok, _result} =
+        Agora.Execution.run(:round_robin, "Hello",
+          agents: %{a: config, b: config},
+          termination: TerminationCondition.max_turns(4),
+          context_policy: policy,
+          telemetry_metadata: %{_test_marker: marker}
+        )
+
+      assert_receive {:compacted, metadata}, 1000
+      assert metadata.strategy == :sliding_window
+      assert metadata.before > metadata.after
+    end
+
+    test "context_compacted event includes telemetry_metadata" do
+      test_pid = self()
+      ref = make_ref()
+      run_id = "compaction-meta-#{inspect(ref)}"
+
+      :telemetry.attach(
+        "compaction-meta-test-#{inspect(ref)}",
+        [:agora, :mode, :context_compacted],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:run_id] == run_id do
+            send(test_pid, {:compacted_meta, metadata})
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach("compaction-meta-test-#{inspect(ref)}") end)
+
+      policy = ContextPolicy.new!(strategy: :sliding_window, window_size: 2)
+      counter = :counters.new(1, [:atomics])
+
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              count = :counters.get(counter, 1)
+              :counters.add(counter, 1, 1)
+              {:ok, Message.assistant("Response #{count}")}
+            end
+          ]
+        )
+
+      {:ok, _result} =
+        Agora.Execution.run(:round_robin, "Hello",
+          agents: %{a: config, b: config},
+          termination: TerminationCondition.max_turns(4),
+          context_policy: policy,
+          telemetry_metadata: %{run_id: run_id}
+        )
+
+      assert_receive {:compacted_meta, metadata}, 1000
+      assert metadata.strategy == :sliding_window
+      assert metadata.before > metadata.after
+      assert metadata.run_id == run_id
+    end
+  end
+
   describe "combined options" do
     test "cancel_token + telemetry_metadata + termination together" do
       config = AgentConfig.new!(provider: :echo, model: "echo")

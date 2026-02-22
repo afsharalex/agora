@@ -3,7 +3,7 @@
 # Demonstrates input-dependent routing using the Workflow Patterns API.
 # A router step classifies input, then condition functions determine which branch runs.
 #
-# Run with: mix run examples/conditional_mode.exs
+# Run with: mix run examples/conditional_workflow.exs
 
 alias Agora.Workflow.Patterns
 
