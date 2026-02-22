@@ -16,25 +16,31 @@ workflow =
     IO.puts("[fetch_users] Fetching user data...")
     {:ok, ["Alice", "Bob", "Charlie"]}
   end)
-  |> Builder.step(:count_users, fn results ->
-    {:ok, users} = results[:fetch_users]
-    count = length(users)
-    IO.puts("[count_users] Found #{count} users")
-    {:ok, count}
-  end, after: :fetch_users)
-  |> Builder.step(:format_names, fn results ->
-    {:ok, users} = results[:fetch_users]
-    formatted = Enum.map_join(users, ", ", &String.upcase/1)
-    IO.puts("[format_names] Formatted: #{formatted}")
-    {:ok, formatted}
-  end, after: :fetch_users)
-  |> Builder.step(:summary, fn results ->
-    {:ok, count} = results[:count_users]
-    {:ok, names} = results[:format_names]
-    summary = "#{count} users: #{names}"
-    IO.puts("[summary] #{summary}")
-    {:ok, summary}
-  end, after: [:count_users, :format_names])
+  |> Builder.step(
+    :count_users,
+    fn results ->
+      {:ok, users} = results[:fetch_users]
+      count = length(users)
+      IO.puts("[count_users] Found #{count} users")
+      {:ok, count}
+    end, after: :fetch_users)
+  |> Builder.step(
+    :format_names,
+    fn results ->
+      {:ok, users} = results[:fetch_users]
+      formatted = Enum.map_join(users, ", ", &String.upcase/1)
+      IO.puts("[format_names] Formatted: #{formatted}")
+      {:ok, formatted}
+    end, after: :fetch_users)
+  |> Builder.step(
+    :summary,
+    fn results ->
+      {:ok, count} = results[:count_users]
+      {:ok, names} = results[:format_names]
+      summary = "#{count} users: #{names}"
+      IO.puts("[summary] #{summary}")
+      {:ok, summary}
+    end, after: [:count_users, :format_names])
   |> Builder.build!()
 
 IO.puts("Workflow built. Executing...\n")

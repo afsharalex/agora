@@ -30,17 +30,19 @@ defmodule MyApp.Workflows.DataPipeline do
     {:ok, formatted}
   end
 
-  step :summary, run: fn r ->
-    {:ok, count} = r[:count]
-    {:ok, names} = r[:format]
-    summary = "#{count} users: #{names}"
-    IO.puts("[summary] #{summary}")
-    {:ok, summary}
-  end
+  step(:summary,
+    run: fn r ->
+      {:ok, count} = r[:count]
+      {:ok, names} = r[:format]
+      summary = "#{count} users: #{names}"
+      IO.puts("[summary] #{summary}")
+      {:ok, summary}
+    end
+  )
 
   # Wire the DAG
-  edge :count, :summary
-  edge :format, :summary
+  edge(:count, :summary)
+  edge(:format, :summary)
 end
 
 # Introspection
