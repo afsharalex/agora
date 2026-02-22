@@ -12,223 +12,149 @@
 #   - Message-match transitions
 #   - Guard inspecting facts for prior tool calls
 #   - on_enter / on_exit callbacks
-#   - get_lifecycle_state/1 for querying the current FSM state
-#   - Echo provider :function mode with counter
 #
 # Run with: mix run examples/order_processing.exs
+# Requires: OPENAI_API_KEY
 
-alias Agora.{Agent, AgentConfig, Message, ToolCall}
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
+end
+
+alias Agora.{Agent, AgentConfig}
 alias Agora.Agent.Lifecycle
 alias Agora.Agent.Lifecycle.StateConfig
 alias Agora.Tool.FunctionTool
 
 # --- Domain tools ---
 
-add_item_tool = FunctionTool.new!(
-  name: "add_item",
-  description: "Add an item to the order",
-  schema: %{
-    "type" => "object",
-    "properties" => %{
-      "item" => %{"type" => "string"},
-      "quantity" => %{"type" => "integer"}
-    }
-  },
-  function: fn args, _ctx ->
-    {:ok, "Added #{args["quantity"]}x #{args["item"]} to order"}
-  end
-)
+add_item_tool =
+  FunctionTool.new!(
+    name: "add_item",
+    description: "Add an item to the order",
+    schema: %{
+      "type" => "object",
+      "properties" => %{
+        "item" => %{"type" => "string"},
+        "quantity" => %{"type" => "integer"}
+      }
+    },
+    function: fn args, _ctx ->
+      {:ok, "Added #{args["quantity"]}x #{args["item"]} to order"}
+    end
+  )
 
-submit_order_tool = FunctionTool.new!(
-  name: "submit_order",
-  description: "Submit the order for confirmation",
-  schema: %{"type" => "object", "properties" => %{"total" => %{"type" => "string"}}},
-  function: fn args, _ctx ->
-    {:ok, "Order submitted — total: #{args["total"]}. Awaiting confirmation."}
-  end
-)
+submit_order_tool =
+  FunctionTool.new!(
+    name: "submit_order",
+    description: "Submit the order for confirmation",
+    schema: %{"type" => "object", "properties" => %{"total" => %{"type" => "string"}}},
+    function: fn args, _ctx ->
+      {:ok, "Order submitted — total: #{args["total"]}. Awaiting confirmation."}
+    end
+  )
 
 # --- Lifecycle configuration ---
-#
-# Transition order matters — submit_order is checked BEFORE add_item so that
-# when both appear in the same run, submit takes precedence over the
-# add_item self-transition.
 
-lifecycle = Lifecycle.new!(
-  initial_state: :taking_order,
-  states: %{
-    taking_order: %StateConfig{
-      instructions: "Take the customer's order. Use add_item for each item, then submit_order when done.",
-      tools: [add_item_tool, submit_order_tool]
+lifecycle =
+  Lifecycle.new!(
+    initial_state: :taking_order,
+    states: %{
+      taking_order: %StateConfig{
+        instructions:
+          "You are a food ordering agent taking the customer's order. Use the add_item tool for each item the customer requests (with the item name and quantity). When the customer is done ordering, use the submit_order tool with an estimated total price. You MUST use add_item before submit_order.",
+        tools: [add_item_tool, submit_order_tool]
+      },
+      confirming: %StateConfig{
+        instructions:
+          "The order is submitted. Ask the customer to confirm. When they agree, include the word 'confirmed' in your response."
+      },
+      processing: %StateConfig{
+        instructions:
+          "The order is confirmed and being processed. Let the customer know their order is being prepared and include the word 'complete' in your response."
+      },
+      complete: %StateConfig{
+        instructions:
+          "The order is complete. Thank the customer and give an estimated delivery time."
+      },
+      cancelled: %StateConfig{
+        instructions:
+          "The order was cancelled due to timeout. Let the customer know they can try again."
+      }
     },
-    confirming: %StateConfig{
-      instructions: "The order is submitted. Ask the customer to confirm. Say 'confirmed' when they agree."
+    transitions: [
+      %{
+        from: :taking_order,
+        to: :confirming,
+        trigger: {:tool_call, "submit_order"},
+        guard: fn ctx ->
+          Enum.any?(ctx.facts.tool_calls_made, &(&1.name == "add_item"))
+        end
+      },
+      %{from: :taking_order, to: :taking_order, trigger: {:tool_call, "add_item"}, guard: nil},
+      %{
+        from: :confirming,
+        to: :processing,
+        trigger:
+          {:message_match,
+           fn msg -> msg.content != nil and String.contains?(msg.content, "confirmed") end},
+        guard: nil
+      },
+      %{from: :confirming, to: :cancelled, trigger: {:state_timeout, 5_000}, guard: nil},
+      %{
+        from: :processing,
+        to: :complete,
+        trigger:
+          {:message_match,
+           fn msg -> msg.content != nil and String.contains?(msg.content, "complete") end},
+        guard: nil
+      }
+    ],
+    on_enter: %{
+      taking_order: fn _from, _to -> IO.puts("  [lifecycle] Ready to take order") end,
+      confirming: fn _from, _to -> IO.puts("  [lifecycle] Awaiting confirmation (5s timeout)") end,
+      processing: fn _from, _to -> IO.puts("  [lifecycle] Processing order...") end,
+      complete: fn _from, _to -> IO.puts("  [lifecycle] Order complete!") end,
+      cancelled: fn _from, _to -> IO.puts("  [lifecycle] Order cancelled (timeout)") end
     },
-    processing: %StateConfig{
-      instructions: "The order is confirmed. Process it and include 'complete' in your response."
-    },
-    complete: %StateConfig{
-      instructions: "The order is complete. Thank the customer."
-    },
-    cancelled: %StateConfig{
-      instructions: "The order was cancelled due to timeout."
+    on_exit: %{
+      confirming: fn _from, _to -> IO.puts("  [lifecycle] Confirmation window closed") end
     }
-  },
-  transitions: [
-    # submit_order advances to confirming — guard ensures items were actually added
-    %{
-      from: :taking_order,
-      to: :confirming,
-      trigger: {:tool_call, "submit_order"},
-      guard: fn ctx ->
-        Enum.any?(ctx.facts.tool_calls_made, &(&1.name == "add_item"))
-      end
-    },
-
-    # add_item self-transition (only fires if submit_order didn't match above)
-    %{from: :taking_order, to: :taking_order, trigger: {:tool_call, "add_item"}, guard: nil},
-
-    # Customer confirmation
-    %{
-      from: :confirming,
-      to: :processing,
-      trigger:
-        {:message_match,
-         fn msg -> msg.content != nil and String.contains?(msg.content, "confirmed") end},
-      guard: nil
-    },
-
-    # 5-second timeout on confirming → auto-cancel
-    %{from: :confirming, to: :cancelled, trigger: {:state_timeout, 5_000}, guard: nil},
-
-    # Processing complete
-    %{
-      from: :processing,
-      to: :complete,
-      trigger:
-        {:message_match,
-         fn msg -> msg.content != nil and String.contains?(msg.content, "complete") end},
-      guard: nil
-    }
-  ],
-  on_enter: %{
-    taking_order: fn _from, _to -> IO.puts("  [lifecycle] Ready to take order") end,
-    confirming: fn _from, _to -> IO.puts("  [lifecycle] Awaiting confirmation (5s timeout)") end,
-    processing: fn _from, _to -> IO.puts("  [lifecycle] Processing order...") end,
-    complete: fn _from, _to -> IO.puts("  [lifecycle] Order complete!") end,
-    cancelled: fn _from, _to -> IO.puts("  [lifecycle] Order cancelled (timeout)") end
-  },
-  on_exit: %{
-    confirming: fn _from, _to -> IO.puts("  [lifecycle] Confirmation window closed") end
-  }
-)
+  )
 
 # ============================================================
 # Part 1: Successful Order Flow
 # ============================================================
-#
-# Counter mapping (each Agent.run makes 1+ provider calls):
-#   Run 1: 0 → add_item tool call, 1 → text (self-transition, stays in taking_order)
-#   Run 2: 2 → add_item tool call, 3 → submit_order tool call, 4 → text (→ confirming)
-#   Run 3: 5 → text with "confirmed" (→ processing)
-#   Run 4: 6 → text with "complete" (→ complete)
 
 IO.puts("=== Order Processing Example ===\n")
 IO.puts("--- Part 1: Successful Order Flow ---\n")
 
-counter = :counters.new(1, [:atomics])
-
-echo_function = fn _messages, _config ->
-  turn = :counters.get(counter, 1)
-  :counters.add(counter, 1, 1)
-
-  case turn do
-    0 ->
-      # Run 1, call 1: add first item
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_1",
-           name: "add_item",
-           arguments: %{"item" => "Margherita Pizza", "quantity" => 2}
-         })
-       ])}
-
-    1 ->
-      # Run 1, call 2: text after adding item
-      {:ok, Message.assistant("Added 2x Margherita Pizza. Anything else?")}
-
-    2 ->
-      # Run 2, call 1: add another item
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_2",
-           name: "add_item",
-           arguments: %{"item" => "Garlic Bread", "quantity" => 1}
-         })
-       ])}
-
-    3 ->
-      # Run 2, call 2: submit the order
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_3",
-           name: "submit_order",
-           arguments: %{"total" => "$27.50"}
-         })
-       ])}
-
-    4 ->
-      # Run 2, call 3: text after submission
-      {:ok, Message.assistant("Order submitted! Total: $27.50. Please confirm.")}
-
-    5 ->
-      # Run 3: confirmation
-      {:ok, Message.assistant("Your order is confirmed! Processing now.")}
-
-    6 ->
-      # Run 4: completion
-      {:ok,
-       Message.assistant(
-         "Your order is complete — 2x Margherita Pizza and 1x Garlic Bread " <>
-           "will arrive in 30 minutes!"
-       )}
-
-    _ ->
-      {:ok, Message.assistant("Thanks for ordering!")}
-  end
-end
-
-config = AgentConfig.new!(
-  provider: :echo,
-  model: "echo",
-  instructions: "You are a food ordering agent.",
-  lifecycle: lifecycle,
-  provider_opts: [
-    echo_mode: :function,
-    echo_function: echo_function
-  ]
-)
+config =
+  AgentConfig.new!(
+    provider: :openai,
+    model: "gpt-4o",
+    instructions: "You are a food ordering agent.",
+    lifecycle: lifecycle
+  )
 
 {:ok, agent} = Agora.start_agent(config)
 
 {:ok, state} = Agent.get_lifecycle_state(agent)
 IO.puts("Initial state: #{state}\n")
 
-# Run 1: add_item only → self-transition (stays in taking_order)
+# Run 1: add_item → self-transition (stays in taking_order)
 IO.puts("--- Run 1: Add first item ---")
 IO.puts("  User: I'd like 2 Margherita Pizzas")
 {:ok, response} = Agent.run(agent, "I'd like 2 Margherita Pizzas")
 IO.puts("  Agent: #{response.content}")
 {:ok, state} = Agent.get_lifecycle_state(agent)
-IO.puts("  State: #{state} (self-transition — still taking order)\n")
+IO.puts("  State: #{state}\n")
 
 # Run 2: add_item + submit_order → guard passes → confirming
 IO.puts("--- Run 2: Add item and submit ---")
-IO.puts("  User: Add a Garlic Bread and submit the order")
-{:ok, response} = Agent.run(agent, "Add a Garlic Bread and submit the order")
+IO.puts("  User: Add a Garlic Bread and that's everything, submit the order")
+{:ok, response} = Agent.run(agent, "Add a Garlic Bread and that's everything, submit the order")
 IO.puts("  Agent: #{response.content}")
 {:ok, state} = Agent.get_lifecycle_state(agent)
 IO.puts("  State: #{state}\n")
@@ -254,59 +180,23 @@ Agora.stop_agent(agent)
 # ============================================================
 # Part 2: Timeout Cancellation Demo
 # ============================================================
-#
-# Submit an order but don't confirm — the 5-second state timeout
-# on :confirming fires and auto-transitions to :cancelled.
 
 IO.puts("--- Part 2: Timeout Cancellation Demo ---\n")
 
-counter2 = :counters.new(1, [:atomics])
-
-echo_function2 = fn _messages, _config ->
-  turn = :counters.get(counter2, 1)
-  :counters.add(counter2, 1, 1)
-
-  case turn do
-    0 ->
-      # Add item and submit in one turn (both tool calls at once)
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_a",
-           name: "add_item",
-           arguments: %{"item" => "Espresso", "quantity" => 1}
-         }),
-         ToolCall.new(%{
-           id: "call_b",
-           name: "submit_order",
-           arguments: %{"total" => "$4.50"}
-         })
-       ])}
-
-    1 ->
-      {:ok, Message.assistant("Order submitted for $4.50. Please confirm within 5 seconds.")}
-
-    _ ->
-      {:ok, Message.assistant("Your order was cancelled due to timeout.")}
-  end
-end
-
-config2 = AgentConfig.new!(
-  provider: :echo,
-  model: "echo",
-  instructions: "You are a food ordering agent.",
-  lifecycle: lifecycle,
-  provider_opts: [
-    echo_mode: :function,
-    echo_function: echo_function2
-  ]
-)
+config2 =
+  AgentConfig.new!(
+    provider: :openai,
+    model: "gpt-4o",
+    instructions:
+      "You are a food ordering agent. When asked to order and submit, use the add_item tool first, then the submit_order tool.",
+    lifecycle: lifecycle
+  )
 
 {:ok, agent2} = Agora.start_agent(config2)
 
 # Submit order immediately → moves to :confirming with 5s timeout
-IO.puts("  User: One espresso please, submit it")
-{:ok, response} = Agent.run(agent2, "One espresso please, submit it")
+IO.puts("  User: One espresso please, submit it right away")
+{:ok, response} = Agent.run(agent2, "One espresso please, submit it right away")
 IO.puts("  Agent: #{response.content}")
 {:ok, state} = Agent.get_lifecycle_state(agent2)
 IO.puts("  State: #{state}")

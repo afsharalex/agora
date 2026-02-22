@@ -1,29 +1,24 @@
 # Simple Chat Example
 #
 # Demonstrates one-shot agent execution using Agora.run/2.
-# Uses the Echo provider by default (no API key needed).
+# The agent uses OpenAI's gpt-4o-mini to respond to a simple question.
 #
 # Run with: mix run examples/simple_chat.exs
-#
-# To use a real provider, replace the config:
-#
-#   config = Agora.AgentConfig.new!(
-#     provider: :anthropic,
-#     model: "claude-sonnet-4-20250514",
-#     instructions: "You are a helpful assistant."
-#   )
+# Requires: OPENAI_API_KEY
 
-alias Agora.AgentConfig
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
+end
 
-config = AgentConfig.new!(
-  provider: :echo,
-  model: "echo",
-  instructions: "You are a helpful assistant."
-)
+config =
+  Agora.agent(:openai, "gpt-4o-mini",
+    instructions: "You are a helpful assistant. Keep your answers concise."
+  )
 
 IO.puts("=== Simple Chat (One-Shot) ===\n")
 
 {:ok, response} = Agora.run(config, "Hello! What is Elixir?")
 IO.puts("User: Hello! What is Elixir?")
 IO.puts("Agent: #{response.content}")
-IO.puts("\nMetadata: #{inspect(response.metadata)}")

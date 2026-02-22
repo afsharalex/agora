@@ -11,188 +11,122 @@
 #   - Tool-result transition with predicate: classify_issue severity check
 #   - Message-match transitions with guard function
 #   - on_enter / on_exit callbacks logging state changes
-#   - Echo provider :function mode with counter for multi-turn simulation
 #
 # Run with: mix run examples/customer_support.exs
+# Requires: OPENAI_API_KEY
 
-alias Agora.{Agent, AgentConfig, Message, ToolCall}
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
+end
+
+alias Agora.{Agent, AgentConfig}
 alias Agora.Agent.Lifecycle
 alias Agora.Agent.Lifecycle.StateConfig
 alias Agora.Tool.FunctionTool
 
 # --- Domain tools (only available in specific states) ---
 
-collect_info_tool = FunctionTool.new!(
-  name: "collect_info",
-  description: "Collect issue details from the customer",
-  schema: %{"type" => "object", "properties" => %{"issue" => %{"type" => "string"}}},
-  function: fn args, _ctx ->
-    {:ok, "Collected: #{args["issue"]}"}
-  end
-)
+collect_info_tool =
+  FunctionTool.new!(
+    name: "collect_info",
+    description: "Collect issue details from the customer",
+    schema: %{"type" => "object", "properties" => %{"issue" => %{"type" => "string"}}},
+    function: fn args, _ctx ->
+      {:ok, "Collected: #{args["issue"]}"}
+    end
+  )
 
-classify_issue_tool = FunctionTool.new!(
-  name: "classify_issue",
-  description: "Classify the issue severity",
-  schema: %{"type" => "object", "properties" => %{"severity" => %{"type" => "string"}}},
-  function: fn args, _ctx ->
-    {:ok, "Severity: #{args["severity"]}"}
-  end
-)
-
-# --- Echo provider function ---
-#
-# Each Agent.run/2 executes a full reasoning loop, calling the provider
-# multiple times: once for a tool call, then again after tool execution
-# for the final text response. The counter tracks total provider calls.
-#
-# Counter mapping:
-#   Run 1 (greeting):       0 → collect_info tool call, 1 → text response
-#   Run 2 (collecting_info): 2 → classify_issue tool call, 3 → text response
-#   Run 3 (triaging):       4 → text response (no tools)
-#   Run 4 (resolving):      5 → text response with "resolved"
-
-counter = :counters.new(1, [:atomics])
-
-echo_function = fn _messages, _config ->
-  turn = :counters.get(counter, 1)
-  :counters.add(counter, 1, 1)
-
-  case turn do
-    0 ->
-      # Run 1, call 1: call collect_info to gather issue details
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_1",
-           name: "collect_info",
-           arguments: %{"issue" => "Login page returns 500 error"}
-         })
-       ])}
-
-    1 ->
-      # Run 1, call 2: text after tool result
-      {:ok, Message.assistant("I've collected your issue details. Let me classify the severity.")}
-
-    2 ->
-      # Run 2, call 1: call classify_issue
-      {:ok,
-       Message.assistant(nil, [
-         ToolCall.new(%{
-           id: "call_2",
-           name: "classify_issue",
-           arguments: %{"severity" => "high"}
-         })
-       ])}
-
-    3 ->
-      # Run 2, call 2: text after classification
-      {:ok, Message.assistant("The issue has been classified as high severity.")}
-
-    4 ->
-      # Run 3: acknowledge and prepare resolution (triaging → resolving)
-      {:ok, Message.assistant("I'm investigating the 500 error on the login service.")}
-
-    5 ->
-      # Run 4: resolution with "resolved" keyword (resolving → closed)
-      {:ok,
-       Message.assistant(
-         "I've resolved the issue — the login service has been restarted. " <>
-           "Your 500 error should be fixed now."
-       )}
-
-    _ ->
-      {:ok, Message.assistant("Is there anything else I can help with?")}
-  end
-end
+classify_issue_tool =
+  FunctionTool.new!(
+    name: "classify_issue",
+    description: "Classify the issue severity (low, medium, high, critical)",
+    schema: %{"type" => "object", "properties" => %{"severity" => %{"type" => "string"}}},
+    function: fn args, _ctx ->
+      {:ok, "Severity: #{args["severity"]}"}
+    end
+  )
 
 # --- Lifecycle configuration ---
-#
-# Transitions are evaluated after each run completes, using facts from
-# that run only. First match wins — order matters!
 
-lifecycle = Lifecycle.new!(
-  initial_state: :greeting,
-  states: %{
-    greeting: %StateConfig{
-      instructions: "Greet the customer and collect their issue using the collect_info tool.",
-      tools: [collect_info_tool]
+lifecycle =
+  Lifecycle.new!(
+    initial_state: :greeting,
+    states: %{
+      greeting: %StateConfig{
+        instructions:
+          "You are a customer support agent greeting a customer. You MUST use the collect_info tool to record their issue. Extract the issue from the customer's message and pass it to the tool.",
+        tools: [collect_info_tool]
+      },
+      collecting_info: %StateConfig{
+        instructions:
+          "You have collected the customer's issue. You MUST use the classify_issue tool to classify its severity. Based on the issue description, classify it as 'low', 'medium', 'high', or 'critical'. A server error or login failure is 'high' severity.",
+        tools: [classify_issue_tool]
+      },
+      triaging: %StateConfig{
+        instructions:
+          "The issue has been classified. Investigate the issue and describe what you'll do to fix it. Be specific about your investigation steps."
+      },
+      resolving: %StateConfig{
+        instructions:
+          "Work on resolving the issue. Describe the fix you've applied and include the word 'resolved' in your response to indicate the fix is complete."
+      },
+      closed: %StateConfig{
+        instructions:
+          "The ticket is closed. Thank the customer and let them know the issue has been handled."
+      }
     },
-    collecting_info: %StateConfig{
-      instructions: "Classify the issue severity using the classify_issue tool.",
-      tools: [classify_issue_tool]
+    transitions: [
+      %{from: :greeting, to: :collecting_info, trigger: {:tool_call, "collect_info"}, guard: nil},
+      %{
+        from: :collecting_info,
+        to: :triaging,
+        trigger:
+          {:tool_result, "classify_issue",
+           fn result -> String.contains?(result.content, "high") end},
+        guard: nil
+      },
+      %{
+        from: :triaging,
+        to: :resolving,
+        trigger: {:message_match, fn msg -> msg.content != nil end},
+        guard: nil
+      },
+      %{
+        from: :resolving,
+        to: :closed,
+        trigger:
+          {:message_match,
+           fn msg -> msg.content != nil and String.contains?(msg.content, "resolved") end},
+        guard: fn ctx ->
+          match?({:done, _}, ctx.outcome) and
+            ctx.facts.final_response != nil and
+            String.length(ctx.facts.final_response.content || "") > 20
+        end
+      }
+    ],
+    on_enter: %{
+      greeting: fn _from, _to -> IO.puts("  [lifecycle] Entering :greeting") end,
+      collecting_info: fn _from, _to -> IO.puts("  [lifecycle] Entering :collecting_info") end,
+      triaging: fn _from, _to -> IO.puts("  [lifecycle] Entering :triaging") end,
+      resolving: fn _from, _to -> IO.puts("  [lifecycle] Entering :resolving") end,
+      closed: fn _from, _to -> IO.puts("  [lifecycle] Entering :closed — ticket complete!") end
     },
-    triaging: %StateConfig{
-      instructions: "The issue has been classified. Investigate and prepare a resolution."
-    },
-    resolving: %StateConfig{
-      instructions: "Work on resolving the issue. Include 'resolved' when the fix is complete."
-    },
-    closed: %StateConfig{
-      instructions: "The ticket is closed. Thank the customer."
+    on_exit: %{
+      resolving: fn _from, _to -> IO.puts("  [lifecycle] Exiting :resolving — issue handled") end
     }
-  },
-  transitions: [
-    # Tool-call trigger: collect_info advances from greeting
-    %{from: :greeting, to: :collecting_info, trigger: {:tool_call, "collect_info"}, guard: nil},
-
-    # Tool-result trigger with predicate: classify_issue result must contain "high"
-    %{
-      from: :collecting_info,
-      to: :triaging,
-      trigger:
-        {:tool_result, "classify_issue",
-         fn result -> String.contains?(result.content, "high") end},
-      guard: nil
-    },
-
-    # Message-match trigger: any response advances from triaging
-    %{
-      from: :triaging,
-      to: :resolving,
-      trigger: {:message_match, fn msg -> msg.content != nil end},
-      guard: nil
-    },
-
-    # Message-match + guard: "resolved" keyword plus guard ensuring substantive response
-    %{
-      from: :resolving,
-      to: :closed,
-      trigger:
-        {:message_match,
-         fn msg -> msg.content != nil and String.contains?(msg.content, "resolved") end},
-      guard: fn ctx ->
-        # Guard: only close if the run succeeded and the response is substantive
-        match?({:done, _}, ctx.outcome) and
-          ctx.facts.final_response != nil and
-          String.length(ctx.facts.final_response.content || "") > 20
-      end
-    }
-  ],
-  on_enter: %{
-    greeting: fn _from, _to -> IO.puts("  [lifecycle] Entering :greeting") end,
-    collecting_info: fn _from, _to -> IO.puts("  [lifecycle] Entering :collecting_info") end,
-    triaging: fn _from, _to -> IO.puts("  [lifecycle] Entering :triaging") end,
-    resolving: fn _from, _to -> IO.puts("  [lifecycle] Entering :resolving") end,
-    closed: fn _from, _to -> IO.puts("  [lifecycle] Entering :closed — ticket complete!") end
-  },
-  on_exit: %{
-    resolving: fn _from, _to -> IO.puts("  [lifecycle] Exiting :resolving — issue handled") end
-  }
-)
+  )
 
 # --- Agent configuration ---
 
-config = AgentConfig.new!(
-  provider: :echo,
-  model: "echo",
-  instructions: "You are a customer support triage agent.",
-  lifecycle: lifecycle,
-  provider_opts: [
-    echo_mode: :function,
-    echo_function: echo_function
-  ]
-)
+config =
+  AgentConfig.new!(
+    provider: :openai,
+    model: "gpt-4o",
+    instructions: "You are a customer support triage agent.",
+    lifecycle: lifecycle
+  )
 
 # --- Run the support flow ---
 

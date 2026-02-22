@@ -4,56 +4,59 @@
 # A manager agent delegates tasks to specialist workers via DELEGATE:name:message.
 #
 # Run with: mix run examples/supervisor.exs
+# Requires: OPENAI_API_KEY
 
-alias Agora.Message
-
-# The manager uses :function mode with a counter to simulate delegation behavior
-manager_counter = :counters.new(1, [:atomics])
-
-manager_fn = fn _messages, _config ->
-  n = :counters.get(manager_counter, 1) + 1
-  :counters.put(manager_counter, 1, n)
-
-  case n do
-    1 ->
-      {:ok, Message.assistant("DELEGATE:analyst:Analyze the performance characteristics of GenServer")}
-
-    2 ->
-      {:ok, Message.assistant("Based on the analysis, GenServer provides sequential message processing with fault tolerance through supervision trees.")}
-
-    _ ->
-      {:ok, Message.assistant("Task complete.")}
-  end
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
 end
 
-manager = Agora.agent(:echo, "echo",
-  name: "manager",
-  instructions: "You delegate tasks to specialists.",
-  provider_opts: [echo_mode: :function, echo_function: manager_fn]
-)
+manager =
+  Agora.agent(:openai, "gpt-4o",
+    name: "manager",
+    instructions: """
+    You are a project manager who delegates tasks to specialist workers.
+    You have two workers available: "analyst" and "writer".
 
-analyst = Agora.agent(:echo, "echo",
-  name: "analyst",
-  instructions: "You are a performance analyst.",
-  provider_opts: [
-    echo_mode: :static,
-    echo_response: "Analysis: GenServer processes messages sequentially from a mailbox. Response time depends on message queue depth and processing time per message. Supervision trees restart crashed processes automatically."
-  ]
-)
+    To delegate a task, your response MUST start with this exact format:
+    DELEGATE:worker_name:message to send
 
-writer = Agora.agent(:echo, "echo",
-  name: "writer",
-  instructions: "You are a technical writer.",
-  provider_opts: [echo_mode: :static, echo_response: "Documentation draft ready."]
-)
+    For example:
+    DELEGATE:analyst:Analyze the performance characteristics of GenServer
+
+    After receiving a worker's response, either delegate another task or provide
+    your final summary. When you are done delegating, respond normally without
+    the DELEGATE prefix.
+
+    For the current task, delegate the analysis work to the analyst first,
+    then synthesize the results.
+    """
+  )
+
+analyst =
+  Agora.agent(:openai, "gpt-4o-mini",
+    name: "analyst",
+    instructions:
+      "You are a performance analyst specializing in Erlang/Elixir systems. Provide detailed technical analysis when asked. Keep responses focused and concise."
+  )
+
+writer =
+  Agora.agent(:openai, "gpt-4o-mini",
+    name: "writer",
+    instructions:
+      "You are a technical writer. Write clear, well-structured documentation based on the information provided."
+  )
 
 IO.puts("=== Supervisor Orchestration (Delegation) ===\n")
 
-{:ok, response} = Agora.supervisor(
-  "Document GenServer performance characteristics",
-  {:manager, manager},
-  [analyst: analyst, writer: writer]
-)
+{:ok, response} =
+  Agora.supervisor(
+    "Document GenServer performance characteristics",
+    {:manager, manager},
+    analyst: analyst,
+    writer: writer
+  )
 
 IO.puts("Final response: #{response.content}")
 IO.puts("\n[Supervisor orchestration complete]")

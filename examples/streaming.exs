@@ -1,41 +1,26 @@
 # Streaming Example
 #
 # Demonstrates real-time token streaming using Agora.stream/2.
-# Uses the Echo provider in :stream mode with explicit events.
+# Uses OpenAI's gpt-4o-mini for live streaming responses.
 #
 # Run with: mix run examples/streaming.exs
-#
-# To use a real provider, replace the config:
-#
-#   config = Agora.AgentConfig.new!(
-#     provider: :anthropic,
-#     model: "claude-sonnet-4-20250514"
-#   )
+# Requires: OPENAI_API_KEY
 
-alias Agora.{AgentConfig, Message, StreamEvent}
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
+end
 
-config = AgentConfig.new!(
-  provider: :echo,
-  model: "echo",
-  provider_opts: [
-    echo_mode: :stream,
-    echo_stream_delay: 50,
-    echo_stream_events: [
-      StreamEvent.text_delta("Hello"),
-      StreamEvent.text_delta(" from"),
-      StreamEvent.text_delta(" the"),
-      StreamEvent.text_delta(" streaming"),
-      StreamEvent.text_delta(" agent!"),
-      StreamEvent.message_complete(Message.assistant("Hello from the streaming agent!")),
-      StreamEvent.done()
-    ]
-  ]
-)
+config =
+  Agora.agent(:openai, "gpt-4o-mini",
+    instructions: "You are a helpful assistant. Keep your answers concise."
+  )
 
 IO.puts("=== Streaming Example ===\n")
 IO.write("Agent: ")
 
-{:ok, stream} = Agora.stream(config, "Hello!")
+{:ok, stream} = Agora.stream(config, "Explain pattern matching in Elixir in 3 sentences.")
 
 stream
 |> Enum.each(fn event ->

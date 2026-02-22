@@ -4,85 +4,48 @@
 # A planner agent creates a structured plan, assigns steps to specialist workers,
 # and reviews results before declaring completion.
 #
+# The framework injects format instructions for PLAN/STEP/END_PLAN and
+# REVIEW:COMPLETE/CONTINUE syntax — the planner's instructions complement them.
+#
 # Run with: mix run examples/plan.exs
+# Requires: OPENAI_API_KEY
 
-alias Agora.Message
-
-planner_counter = :counters.new(1, [:atomics])
-
-planner_fn = fn _messages, _config ->
-  n = :counters.get(planner_counter, 1) + 1
-  :counters.put(planner_counter, 1, n)
-
-  case n do
-    1 ->
-      {:ok,
-       Message.assistant("""
-       I'll create a plan for this task.
-
-       PLAN
-       STEP:1:researcher:Research the key concepts of BEAM concurrency
-       STEP:2:writer:Write a summary article based on the research:DEP:1
-       END_PLAN
-       """)}
-
-    2 ->
-      {:ok, Message.assistant("REVIEW:CONTINUE:Research looks good, proceed to writing")}
-
-    3 ->
-      {:ok, Message.assistant("REVIEW:COMPLETE:Article is well-written and covers all key points")}
-
-    _ ->
-      {:ok, Message.assistant("REVIEW:COMPLETE:Done")}
-  end
+unless System.get_env("OPENAI_API_KEY") do
+  IO.puts("This example requires an OpenAI API key.")
+  IO.puts("Set it with: export OPENAI_API_KEY=your-key-here")
+  System.halt(1)
 end
 
-planner = Agora.agent(:echo, "echo",
-  name: "planner",
-  instructions: "You are a project planner that breaks tasks into steps.",
-  provider_opts: [echo_mode: :function, echo_function: planner_fn]
-)
+planner =
+  Agora.agent(:openai, "gpt-4o",
+    name: "planner",
+    instructions:
+      "You are a project planner. Break tasks into steps and assign them to the available workers. Follow the planning and review format instructions exactly."
+  )
 
-researcher_fn = fn _messages, _config ->
-  {:ok,
-   Message.assistant(
-     "Research findings: The BEAM VM uses lightweight processes (not OS threads) " <>
-       "that are individually garbage collected. Each process has its own heap, " <>
-       "enabling soft real-time guarantees."
-   )}
-end
+researcher =
+  Agora.agent(:openai, "gpt-4o-mini",
+    name: "researcher",
+    instructions:
+      "You are a technical researcher. Provide detailed, accurate research findings on the topic you're given. Focus on key concepts and technical details."
+  )
 
-researcher = Agora.agent(:echo, "echo",
-  name: "researcher",
-  instructions: "You are a technical researcher.",
-  provider_opts: [echo_mode: :function, echo_function: researcher_fn]
-)
-
-writer_fn = fn messages, _config ->
-  last_user = Enum.find(messages, &(&1.role == :user))
-  context = if last_user, do: last_user.content, else: ""
-
-  {:ok,
-   Message.assistant(
-     "Article: Understanding BEAM Concurrency\n\n" <>
-       "The BEAM virtual machine powers Elixir and Erlang with a unique approach " <>
-       "to concurrency.\n\nBased on research: #{String.slice(context, 0, 100)}..."
-   )}
-end
-
-writer = Agora.agent(:echo, "echo",
-  name: "writer",
-  instructions: "You are a technical writer.",
-  provider_opts: [echo_mode: :function, echo_function: writer_fn]
-)
+writer =
+  Agora.agent(:openai, "gpt-4o-mini",
+    name: "writer",
+    instructions:
+      "You are a technical writer. Write clear, engaging content based on the research or information provided. Do not invent facts — use only the material given."
+  )
 
 IO.puts("=== Plan Orchestration ===\n")
 
-{:ok, response} = Agora.plan(
-  "Write an article about BEAM concurrency",
-  {:planner, planner},
-  [researcher: researcher, writer: writer]
-)
+{:ok, response} =
+  Agora.plan(
+    "Write an article about BEAM concurrency",
+    {:planner, planner},
+    researcher: researcher,
+    writer: writer
+  )
 
-IO.puts("Final result: #{String.slice(response.content, 0, 120)}...")
+IO.puts("Final result: #{String.slice(response.content, 0, 200)}...")
 IO.puts("\n[Plan orchestration complete]")
