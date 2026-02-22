@@ -576,6 +576,5 @@ defmodule Agora.Orchestrator.Handoff do
     end
   end
 
-  defp normalize_message(nil), do: ""
   defp normalize_message(msg) when is_binary(msg), do: msg
 end
