@@ -69,7 +69,7 @@ User → Agent.stream_run/2 → streaming loop:
 - `Agora.Agent.Lifecycle` -- State machine lifecycle configuration (states, transitions, callbacks)
 - `Agora.AgentConfig` -- NimbleOptions-validated configuration (`:lifecycle` field selects backend)
 - `Agora.Message` -- Universal message struct (role, content, tool_calls, tool_results, metadata)
-- `Agora.Error` -- 14 typed error categories
+- `Agora.Error` -- 15 typed error categories
 
 ### Providers
 - `Agora.Provider` -- Behaviour + resolution (atom → module mapping)
@@ -115,7 +115,8 @@ Agora uses typed errors throughout:
 %Agora.Error{
   type: :provider_error | :tool_error | :validation_error | :timeout | :rate_limit |
         :auth_error | :config_error | :iteration_limit | :middleware_error |
-        :memory_error | :orchestration_error | :workflow_error | :streaming_error | :unknown,
+        :memory_error | :orchestration_error | :workflow_error | :streaming_error |
+        :cancelled | :unknown,
   message: "Human-readable description",
   metadata: %{}  # optional context
 }

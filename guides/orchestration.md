@@ -131,7 +131,9 @@ defmodule MyApp.Orchestrator.Priority do
 
   @impl true
   def init(config) do
-    {:ok, %{agents: config.agents, priority_order: config.opts[:priority]}}
+    # config is a map with :agent_names (list of atoms) plus any keys
+    # from :orchestrator_opts. Access custom options directly from config.
+    {:ok, %{agent_names: config.agent_names, priority_order: config[:priority]}}
   end
 
   @impl true
@@ -154,10 +156,14 @@ defmodule MyApp.Orchestrator.Priority do
     {:error, error, state}
   end
 end
+
+# Pass custom options via :orchestrator_opts:
+# Agora.run_mode(:priority, "task", agents: agents,
+#   orchestrator_opts: [priority: [:analyst, :writer]])
 ```
 
 The orchestrator behaviour has three callbacks:
-- `init/1` -- Initialize state from config
+- `init/1` -- Initialize state from a map containing `:agent_names` and any `:orchestrator_opts`
 - `next/2` -- Pick next agent and input message
 - `handle_result/3` -- Process agent result, decide to continue or stop
 

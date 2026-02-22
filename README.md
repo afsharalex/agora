@@ -609,7 +609,7 @@ Agora emits telemetry events at key instrumentation points via the `:telemetry` 
 | `[:agora, :workflow, :step]` | `:start`, `:stop`, `:exception` | `Agora.Workflow.Executor` |
 | `[:agora, :provider, :stream]` | `:start`, `:stop` | `Agora.Provider` |
 | `[:agora, :agent, :stream_run]` | `:start`, `:stop` | `Agora.Agent` |
-| `[:agora, :mode, :event]` | (single event) | `Agora.Execution` |
+| `[:agora, :mode, :event]` | (single event) | `Agora.Orchestrator.Runner` / `Agora.Execution` |
 | `[:agora, :mode, :context_compacted]` | (single event) | `Agora.Execution` / `Agora.Workflow.Executor` |
 
 See `Agora.Telemetry` moduledoc for full measurement and metadata details per event.
