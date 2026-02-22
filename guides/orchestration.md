@@ -157,9 +157,13 @@ defmodule MyApp.Orchestrator.Priority do
   end
 end
 
-# Pass custom options via :orchestrator_opts:
-# Agora.run_mode(:priority, "task", agents: agents,
-#   orchestrator_opts: [priority: [:analyst, :writer]])
+# Custom orchestrators use the Runner API directly (run_mode/3 only supports built-in modes):
+# {:ok, runner} = Runner.start_link(
+#   orchestrator: MyApp.Orchestrator.Priority,
+#   agents: agents,
+#   orchestrator_opts: [priority: [:analyst, :writer]]
+# )
+# {:ok, response} = Runner.run(runner, "task")
 ```
 
 The orchestrator behaviour has three callbacks:
