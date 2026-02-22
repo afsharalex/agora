@@ -1,6 +1,6 @@
 # Tools
 
-How to create tools for agents, including module-based tools, inline function tools, and schema helpers.
+How to create tools for agents, including module-based tools, inline function tools, built-in tools, and the sandbox security model.
 
 ## Overview
 
@@ -8,10 +8,100 @@ Tools let agents call external functions. When the LLM returns tool calls, the a
 
 ## Built-in Tools
 
+### Stateless Tools
+
+These tools have no side effects and don't require any special configuration:
+
 | Tool | Module | Description |
 |------|--------|-------------|
 | Calculator | `Agora.Tool.Calculator` | Basic arithmetic (add, subtract, multiply, divide) |
 | DateTime | `Agora.Tool.DateTime` | Current date/time in configurable formats |
+| Think | `Agora.Tool.Think` | Reasoning scratchpad for chain-of-thought |
+| Json | `Agora.Tool.Json` | Parse, format, and query JSON data |
+| Regex | `Agora.Tool.Regex` | Match, scan, and replace with regular expressions |
+| Http | `Agora.Tool.Http` | HTTP requests with SSRF protection |
+
+```elixir
+config = Agora.AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  tools: [Agora.Tool.Think, Agora.Tool.Json, Agora.Tool.Http]
+)
+```
+
+### System Tools (Sandbox Required)
+
+These tools interact with the filesystem and OS. They require a `%Agora.Tool.Sandbox{}` in `tool_opts`:
+
+| Tool | Module | Description |
+|------|--------|-------------|
+| ReadFile | `Agora.Tool.ReadFile` | Read file contents (UTF-8 or binary/Base64) |
+| WriteFile | `Agora.Tool.WriteFile` | Write or append to files (atomic write mode) |
+| ListDirectory | `Agora.Tool.ListDirectory` | List directory contents with regex filtering |
+| Shell | `Agora.Tool.Shell` | Execute commands with argument lists or shell mode |
+
+```elixir
+sandbox = %Agora.Tool.Sandbox{
+  working_directory: "/tmp/workspace",
+  allowed_paths: ["/tmp/workspace"],
+  denied_paths: ["/tmp/workspace/secrets"],
+  allowed_commands: ["ls", "grep", "cat", "echo"],
+  denied_commands: ["rm", "sudo", "chmod"]
+}
+
+config = Agora.AgentConfig.new!(
+  provider: :anthropic,
+  model: "claude-sonnet-4-20250514",
+  tools: [Agora.Tool.ReadFile, Agora.Tool.WriteFile, Agora.Tool.ListDirectory, Agora.Tool.Shell],
+  tool_opts: [sandbox: sandbox]
+)
+```
+
+## Sandbox Security Model
+
+The `Agora.Tool.Sandbox` struct controls what system tools can access:
+
+```elixir
+%Agora.Tool.Sandbox{
+  working_directory: "/tmp/workspace",    # base for relative paths
+  allowed_paths: ["/tmp/workspace"],      # prefix allowlist
+  denied_paths: ["/tmp/workspace/.env"],  # prefix denylist (wins over allowed)
+  allowed_commands: :all,                 # :all or ["ls", "grep", ...]
+  denied_commands: ["rm", "sudo"],        # always denied (wins over allowed)
+  max_file_size: 10_485_760,             # 10 MB read limit
+  max_output_size: 1_048_576,            # 1 MB shell output limit
+  shell_timeout: 30_000,                 # ms for shell commands
+  allow_shell_mode: false,               # must explicitly enable shell: true
+  env: nil                               # nil = inherit, [{k,v}] = add/override vars
+}
+```
+
+### Path Validation
+
+- Paths are resolved relative to `working_directory` via `Path.expand/2`
+- Symlinks are recursively resolved to their real targets
+- Prefix matching (not globs) works for both existing and non-existent paths
+- Denied paths always win over allowed paths
+
+### Command Validation
+
+- Commands are normalized to their basename (`/usr/bin/ls` becomes `ls`)
+- Denied commands always win over allowed commands
+- Shell mode (`shell: true`) requires `allow_shell_mode: true`
+- Shell mode validates only the primary command; piped commands are not checked
+- **Interpreter bypass**: Commands like `sh -c "rm ..."` bypass the deny list for `rm` since only `sh` is validated. Add interpreters (`sh`, `bash`, `zsh`, `python`, `perl`, `ruby`, `node`) to `denied_commands` when using a restrictive allowlist.
+
+### Environment Variables
+
+By default, commands inherit the process environment. The `env` option is **additive** — it merges with (adds to or overrides) the existing process environment. There is no way to run with a fully clean environment via Erlang's `System.cmd/3`.
+
+```elixir
+# Add/override specific variables
+sandbox = %Agora.Tool.Sandbox{
+  # ... other fields ...
+  env: [{"PATH", "/usr/bin"}, {"MY_API_KEY", "secret"}]
+}
+```
 
 ## Create a Module Tool
 

@@ -16,6 +16,7 @@ defmodule Agora.AgentConfig do
     * `:max_iterations` - maximum reasoning loop iterations (default: `10`)
     * `:name` - human-readable agent name (default: `nil`)
     * `:provider_opts` - per-agent provider overrides (default: `[]`)
+    * `:tool_opts` - per-agent tool execution options such as sandbox config (default: `[]`)
     * `:lifecycle` - lifecycle state machine configuration (default: `nil`). When set, agent uses gen_statem backend.
 
   """
@@ -30,6 +31,7 @@ defmodule Agora.AgentConfig do
           max_iterations: pos_integer(),
           name: String.t() | nil,
           provider_opts: keyword(),
+          tool_opts: keyword(),
           lifecycle: Agora.Agent.Lifecycle.t() | nil
         }
 
@@ -44,6 +46,7 @@ defmodule Agora.AgentConfig do
     middleware: [],
     max_iterations: 10,
     provider_opts: [],
+    tool_opts: [],
     lifecycle: nil
   ]
 
@@ -93,6 +96,11 @@ defmodule Agora.AgentConfig do
       type: :keyword_list,
       default: [],
       doc: "Per-agent provider overrides (e.g. API key, base URL)"
+    ],
+    tool_opts: [
+      type: :keyword_list,
+      default: [],
+      doc: "Per-agent tool execution options (e.g. sandbox config)"
     ],
     lifecycle: [
       type: {:or, [{:struct, Agora.Agent.Lifecycle}, nil]},

@@ -134,7 +134,7 @@ defmodule Agora.ToolBroker do
           ToolResult.success(tool_call.id, tool_call.name, result)
 
         {:error, reason} ->
-          ToolResult.error(tool_call.id, tool_call.name, to_string(reason))
+          ToolResult.error(tool_call.id, tool_call.name, reason)
       end
     else
       {:error, message} when is_binary(message) ->

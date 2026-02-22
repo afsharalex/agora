@@ -229,6 +229,108 @@ defmodule Agora.Agent.LoopTest do
     end
   end
 
+  describe "run/1 tool_opts sandbox propagation" do
+    test "sandbox from tool_opts is passed to tool context" do
+      test_pid = self()
+
+      spy_tool =
+        FunctionTool.new!(
+          name: "spy_sandbox",
+          description: "Reports sandbox presence",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _args, ctx ->
+            send(test_pid, {:tool_context, ctx})
+            {:ok, "spied"}
+          end
+        )
+
+      call_count = :counters.new(1, [:atomics])
+
+      sandbox = %Agora.Tool.Sandbox{
+        working_directory: "/tmp/test_workspace",
+        allowed_paths: ["/tmp/test_workspace"],
+        denied_paths: ["/tmp/test_workspace/secrets"]
+      }
+
+      config =
+        echo_config(
+          tools: [spy_tool],
+          tool_opts: [sandbox: sandbox],
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              :counters.add(call_count, 1, 1)
+              count = :counters.get(call_count, 1)
+
+              if count == 1 do
+                call =
+                  ToolCall.new(%{id: "c1", name: "spy_sandbox", arguments: %{}})
+
+                {:ok, Message.assistant(nil, [call])}
+              else
+                {:ok, Message.assistant("done")}
+              end
+            end
+          ]
+        )
+
+      state = build_state(config, [Message.user("Check sandbox")])
+
+      %RunResult{outcome: {:done, _}} = Loop.run(state)
+
+      assert_receive {:tool_context, ctx}
+      assert %Agora.Tool.Sandbox{} = ctx.sandbox
+      assert ctx.sandbox.working_directory == "/tmp/test_workspace"
+      assert ctx.sandbox.allowed_paths == ["/tmp/test_workspace"]
+      assert ctx.sandbox.denied_paths == ["/tmp/test_workspace/secrets"]
+    end
+
+    test "tool context has no sandbox when tool_opts is empty" do
+      test_pid = self()
+
+      spy_tool =
+        FunctionTool.new!(
+          name: "spy_no_sandbox",
+          description: "Reports sandbox absence",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _args, ctx ->
+            send(test_pid, {:tool_context, ctx})
+            {:ok, "spied"}
+          end
+        )
+
+      call_count = :counters.new(1, [:atomics])
+
+      config =
+        echo_config(
+          tools: [spy_tool],
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              :counters.add(call_count, 1, 1)
+              count = :counters.get(call_count, 1)
+
+              if count == 1 do
+                call =
+                  ToolCall.new(%{id: "c1", name: "spy_no_sandbox", arguments: %{}})
+
+                {:ok, Message.assistant(nil, [call])}
+              else
+                {:ok, Message.assistant("done")}
+              end
+            end
+          ]
+        )
+
+      state = build_state(config, [Message.user("Check no sandbox")])
+
+      %RunResult{outcome: {:done, _}} = Loop.run(state)
+
+      assert_receive {:tool_context, ctx}
+      refute Map.has_key?(ctx, :sandbox)
+    end
+  end
+
   describe "run/1 facts accumulation" do
     test "accumulates facts across multiple tool iterations" do
       add_tool =

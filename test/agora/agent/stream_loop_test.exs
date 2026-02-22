@@ -144,6 +144,82 @@ defmodule Agora.Agent.StreamLoopTest do
     end
   end
 
+  describe "run/2 tool_opts sandbox propagation" do
+    test "sandbox from tool_opts is passed to tool context" do
+      test_pid = self()
+
+      spy_tool = %Agora.Tool.FunctionTool{
+        name: "spy_stream_sandbox",
+        description: "Reports sandbox",
+        schema: %{},
+        function: fn _args, ctx ->
+          send(test_pid, {:stream_tool_context, ctx})
+          {:ok, "spied"}
+        end
+      }
+
+      counter = :counters.new(1, [:atomics])
+
+      sandbox = %Agora.Tool.Sandbox{
+        working_directory: "/tmp/stream_workspace",
+        allowed_paths: ["/tmp/stream_workspace"],
+        denied_paths: []
+      }
+
+      config =
+        echo_config(
+          tools: [spy_tool],
+          tool_opts: [sandbox: sandbox],
+          provider_opts: [
+            echo_mode: :stream,
+            echo_stream_function: fn caller, ref ->
+              :counters.add(counter, 1, 1)
+              count = :counters.get(counter, 1)
+
+              if count == 1 do
+                send(
+                  caller,
+                  {Agora.Stream, ref, StreamEvent.tool_call_start("c1", "spy_stream_sandbox", 0)}
+                )
+
+                send(
+                  caller,
+                  {Agora.Stream, ref, StreamEvent.tool_call_delta("c1", ~s({}))}
+                )
+
+                msg =
+                  Message.assistant(nil, [
+                    Agora.ToolCall.new(%{
+                      id: "c1",
+                      name: "spy_stream_sandbox",
+                      arguments: %{}
+                    })
+                  ])
+
+                send(caller, {Agora.Stream, ref, StreamEvent.message_complete(msg)})
+                send(caller, {Agora.Stream, ref, StreamEvent.done()})
+              else
+                send(caller, {Agora.Stream, ref, StreamEvent.text_delta("done")})
+                msg = Message.assistant("done")
+                send(caller, {Agora.Stream, ref, StreamEvent.message_complete(msg)})
+                send(caller, {Agora.Stream, ref, StreamEvent.done()})
+              end
+            end
+          ]
+        )
+
+      state = build_state(config, [Message.user("Check sandbox")])
+      {emit_fn, ref} = capturing_emit_fn()
+
+      {:ok, _messages, _state_updates} = StreamLoop.run(state, emit_fn)
+      _events = collect_events(ref)
+
+      assert_receive {:stream_tool_context, ctx}
+      assert %Agora.Tool.Sandbox{} = ctx.sandbox
+      assert ctx.sandbox.working_directory == "/tmp/stream_workspace"
+    end
+  end
+
   describe "run/2 middleware" do
     test "on_stream_event middleware fires" do
       test_pid = self()

@@ -336,9 +336,15 @@ defmodule Agora.Agent.StreamLoop do
   defp build_tool_context(config) do
     base = %{agent_name: config.name}
 
-    case Keyword.get(config.provider_opts, :_agora_tool_depth) do
-      nil -> base
-      depth -> Map.put(base, :agora_tool_depth, depth)
+    base =
+      case Keyword.get(config.provider_opts, :_agora_tool_depth) do
+        nil -> base
+        depth -> Map.put(base, :agora_tool_depth, depth)
+      end
+
+    case Keyword.get(config.tool_opts, :sandbox) do
+      %Agora.Tool.Sandbox{} = sandbox -> Map.put(base, :sandbox, sandbox)
+      _ -> base
     end
   end
 

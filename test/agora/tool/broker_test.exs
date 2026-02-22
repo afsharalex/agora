@@ -194,6 +194,26 @@ defmodule Agora.ToolBrokerTest do
       assert result.is_error == true
       assert result.content == "something went wrong"
     end
+
+    test "tool {:error, map} produces JSON-encoded error result without crashing" do
+      map_error_tool =
+        FunctionTool.new!(
+          name: "map_error_tool",
+          description: "returns a map error",
+          schema: %{"type" => "object", "properties" => %{}},
+          function: fn _args, _ctx -> {:error, %{code: 42, message: "boom"}} end
+        )
+
+      tool_call = call("map_error_tool")
+
+      assert {:ok, [%ToolResult{} = result]} =
+               ToolBroker.execute([tool_call], [map_error_tool])
+
+      assert result.is_error == true
+      decoded = Jason.decode!(result.content)
+      assert decoded["code"] == 42
+      assert decoded["message"] == "boom"
+    end
   end
 
   describe "execute/4 - tool raises exception" do

@@ -27,6 +27,7 @@ This returns an `%AgentConfig{}` struct — a data description of the agent, not
 | `:memory` | `{module, keyword()}` | Persistent message storage backend |
 | `:max_iterations` | `pos_integer()` | Safety limit on reasoning loop iterations (default 10) |
 | `:provider_opts` | `keyword()` | Provider-specific options (API keys, timeouts, etc.) |
+| `:tool_opts` | `keyword()` | Tool execution options (e.g. `sandbox: %Sandbox{}`) |
 
 ## Running a Single Agent
 

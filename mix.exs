@@ -106,8 +106,17 @@ defmodule Agora.MixProject do
           Agora.Tool.FunctionTool,
           Agora.Tool.Schema,
           Agora.ToolBroker,
+          Agora.Tool.Sandbox,
           Agora.Tool.Calculator,
-          Agora.Tool.DateTime
+          Agora.Tool.DateTime,
+          Agora.Tool.Think,
+          Agora.Tool.Json,
+          Agora.Tool.Regex,
+          Agora.Tool.Http,
+          Agora.Tool.ReadFile,
+          Agora.Tool.WriteFile,
+          Agora.Tool.ListDirectory,
+          Agora.Tool.Shell
         ],
         Middleware: [
           Agora.Middleware,
