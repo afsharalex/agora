@@ -19,6 +19,11 @@ defmodule Agora.Workflow.Executor do
     * `:input` — initial input value available to all steps as `results[:input]`
     * `:on_failure` — `:abort` (default) or `:skip`
     * `:checkpoint_store` — `{module, keyword()}` tuple for checkpoint persistence
+    * `:checkpoint_id` — resume from a specific checkpoint (validates compatibility)
+    * `:checkpoint_version` — specific snapshot version to resume from (default: `:latest`)
+    * `:skip_compatibility_check` — bypass workflow hash verification (default: `false`)
+    * `:checkpoint_metadata` — extra metadata stored with checkpoint (`map()`)
+    * `:retention` — retention policy options (e.g., `[max_completed: 5]`), applied after successful completion
     * `:supervisor` — Task.Supervisor name (default: `Agora.WorkflowTaskSupervisor`)
     * `:cancel_token` — `%CancelToken{}` for boundary-cooperative cancellation
     * `:context_policy` — `%ContextPolicy{}` injected into AgentConfig step handlers
@@ -41,7 +46,7 @@ defmodule Agora.Workflow.Executor do
   require Logger
 
   alias Agora.{AgentConfig, CancelToken, ContextPolicy, Error, Workflow}
-  alias Agora.Workflow.{CheckpointStore, Step}
+  alias Agora.Workflow.{Checkpoint, CheckpointStore, Step}
 
   @default_supervisor Agora.WorkflowTaskSupervisor
 
@@ -84,6 +89,11 @@ defmodule Agora.Workflow.Executor do
   defp do_run(workflow, opts) do
     input = Keyword.get(opts, :input)
     checkpoint_config = Keyword.get(opts, :checkpoint_store)
+    checkpoint_id = Keyword.get(opts, :checkpoint_id)
+    checkpoint_version = Keyword.get(opts, :checkpoint_version, :latest)
+    skip_compat = Keyword.get(opts, :skip_compatibility_check, false)
+    checkpoint_metadata = Keyword.get(opts, :checkpoint_metadata, %{})
+    retention_opts = Keyword.get(opts, :retention)
 
     run_ctx = %{
       on_failure: Keyword.get(opts, :on_failure, :abort),
@@ -91,18 +101,51 @@ defmodule Agora.Workflow.Executor do
       cancel_token: Keyword.get(opts, :cancel_token),
       context_policy: Keyword.get(opts, :context_policy),
       telemetry_metadata: Keyword.get(opts, :telemetry_metadata, %{}),
-      on_event: Keyword.get(opts, :on_event)
+      on_event: Keyword.get(opts, :on_event),
+      checkpoint_config: checkpoint_config,
+      retention: retention_opts
     }
 
-    with {:ok, checkpoint_state} <- init_checkpoint(checkpoint_config),
-         {:ok, levels} <- compute_levels(workflow),
-         {:ok, checkpointed} <- load_checkpoint(checkpoint_state, workflow) do
-      initial_results = Map.put(checkpointed, :input, input)
-      execute_levels(levels, workflow, initial_results, run_ctx, checkpoint_state)
+    with {:ok, cs0} <- init_checkpoint(checkpoint_config),
+         {:ok, cs1} <- maybe_lock(cs0, checkpoint_id, run_ctx) do
+      # Use a unique process dict key to avoid collisions with nested executor calls
+      cs_key = {__MODULE__, :latest_cs, make_ref()}
+      Process.put(cs_key, cs1)
+
+      try do
+        with {:ok, levels} <- compute_levels(workflow),
+             {:ok, {checkpoint, checkpointed, cs2}} <-
+               resolve_checkpoint(
+                 cs1,
+                 checkpoint_id,
+                 checkpoint_version,
+                 workflow,
+                 skip_compat,
+                 checkpoint_metadata
+               ) do
+          initial_results = Map.put(checkpointed, :input, input)
+          Process.put(cs_key, cs2)
+
+          case execute_levels(levels, workflow, initial_results, run_ctx, cs2, checkpoint) do
+            {:ok, results, cs3, updated_checkpoint} ->
+              Process.put(cs_key, cs3)
+              finalize_checkpoint(cs3, updated_checkpoint, :completed, results, run_ctx)
+              {:ok, results}
+
+            {:error, reason, accumulated_results, cs3, updated_checkpoint} ->
+              Process.put(cs_key, cs3)
+              finalize_checkpoint(cs3, updated_checkpoint, :failed, accumulated_results, run_ctx)
+              {:error, reason}
+          end
+        end
+      after
+        latest_cs = Process.delete(cs_key)
+        maybe_unlock(latest_cs, checkpoint_id)
+      end
     end
   end
 
-  # --- Checkpoint init/load ---
+  # --- Checkpoint init/load/resolve ---
 
   defp init_checkpoint(nil), do: {:ok, nil}
 
@@ -110,9 +153,95 @@ defmodule Agora.Workflow.Executor do
     CheckpointStore.init({module, opts})
   end
 
-  defp load_checkpoint(nil, _workflow), do: {:ok, %{}}
+  defp maybe_lock(nil, _checkpoint_id, _run_ctx), do: {:ok, nil}
+  defp maybe_lock(cs, nil, _run_ctx), do: {:ok, cs}
 
-  defp load_checkpoint(checkpoint_state, workflow) do
+  defp maybe_lock(cs, checkpoint_id, run_ctx) do
+    case CheckpointStore.lock(cs, checkpoint_id) do
+      {:ok, new_cs} ->
+        Agora.Telemetry.emit(
+          [:agora, :workflow, :checkpoint, :lock],
+          %{system_time: System.system_time()},
+          Map.merge(run_ctx.telemetry_metadata, %{checkpoint_id: checkpoint_id, acquired: true})
+        )
+
+        {:ok, new_cs}
+
+      {:error, _} = error ->
+        Agora.Telemetry.emit(
+          [:agora, :workflow, :checkpoint, :lock],
+          %{system_time: System.system_time()},
+          Map.merge(run_ctx.telemetry_metadata, %{checkpoint_id: checkpoint_id, acquired: false})
+        )
+
+        error
+    end
+  end
+
+  defp maybe_unlock(nil, _checkpoint_id), do: :ok
+  defp maybe_unlock(_cs, nil), do: :ok
+
+  defp maybe_unlock(cs, checkpoint_id) do
+    CheckpointStore.unlock(cs, checkpoint_id)
+    :ok
+  end
+
+  defp resolve_checkpoint(cs, nil, _version, workflow, _skip_compat, checkpoint_metadata) do
+    # No checkpoint_id — start fresh, optionally use legacy load_all
+    case load_checkpoint_legacy(cs, workflow) do
+      {:ok, checkpointed} ->
+        checkpoint =
+          if cs do
+            Checkpoint.new(workflow, metadata: checkpoint_metadata)
+          else
+            nil
+          end
+
+        {:ok, {checkpoint, checkpointed, cs}}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp resolve_checkpoint(cs, checkpoint_id, version, workflow, skip_compat, checkpoint_metadata) do
+    case CheckpointStore.load_snapshot(cs, checkpoint_id, version) do
+      {:ok, nil} ->
+        # No snapshot found — start fresh with this ID
+        checkpoint = Checkpoint.new(workflow, id: checkpoint_id, metadata: checkpoint_metadata)
+        {:ok, {checkpoint, %{}, cs}}
+
+      {:ok, %Checkpoint{} = checkpoint} ->
+        Agora.Telemetry.emit(
+          [:agora, :workflow, :checkpoint, :load],
+          %{system_time: System.system_time()},
+          %{
+            checkpoint_id: checkpoint_id,
+            version: checkpoint.version,
+            loaded_steps: MapSet.size(checkpoint.completed_steps)
+          }
+        )
+
+        if skip_compat do
+          {:ok, {checkpoint, checkpoint.results, cs}}
+        else
+          case Checkpoint.check_compatibility(checkpoint, workflow) do
+            :ok ->
+              {:ok, {checkpoint, checkpoint.results, cs}}
+
+            {:error, _} = error ->
+              error
+          end
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp load_checkpoint_legacy(nil, _workflow), do: {:ok, %{}}
+
+  defp load_checkpoint_legacy(checkpoint_state, workflow) do
     known_ids = Map.keys(workflow.steps)
     CheckpointStore.load_all(checkpoint_state, known_ids)
   end
@@ -176,31 +305,33 @@ defmodule Agora.Workflow.Executor do
 
   # --- Level execution ---
 
-  defp execute_levels([], _workflow, results, _run_ctx, _checkpoint) do
-    {:ok, Map.delete(results, :input)}
+  # execute_levels returns {:ok, results, checkpoint_state, checkpoint}
+  # or {:error, reason, accumulated_results, checkpoint_state, checkpoint}
+
+  defp execute_levels([], _workflow, results, _run_ctx, checkpoint_state, checkpoint) do
+    {:ok, Map.delete(results, :input), checkpoint_state, checkpoint}
   end
 
-  defp execute_levels([level | rest], workflow, results, run_ctx, checkpoint) do
-    # Check cancellation before each level
+  defp execute_levels([level | rest], workflow, results, run_ctx, checkpoint_state, checkpoint) do
     if cancelled?(run_ctx) do
-      {:error, Error.new(:cancelled, "Workflow execution cancelled")}
+      {:error, Error.new(:cancelled, "Workflow execution cancelled"), Map.delete(results, :input),
+       checkpoint_state, checkpoint}
     else
-      execute_level(level, rest, workflow, results, run_ctx, checkpoint)
+      execute_level(level, rest, workflow, results, run_ctx, checkpoint_state, checkpoint)
     end
   end
 
-  defp execute_level(level, rest, workflow, results, run_ctx, checkpoint) do
+  defp execute_level(level, rest, workflow, results, run_ctx, checkpoint_state, checkpoint) do
     {runnable, skipped} = partition_level(level, workflow, results)
 
     # Add skipped steps to results
     results = Enum.reduce(skipped, results, fn id, acc -> Map.put(acc, id, :skipped) end)
 
     if runnable == [] do
-      execute_levels(rest, workflow, results, run_ctx, checkpoint)
+      execute_levels(rest, workflow, results, run_ctx, checkpoint_state, checkpoint)
     else
       level_start = System.monotonic_time(:millisecond)
 
-      # Spawn all runnable steps
       task_entries =
         Enum.map(runnable, fn step_id ->
           step = Map.fetch!(workflow.steps, step_id)
@@ -217,19 +348,19 @@ defmodule Agora.Workflow.Executor do
           {task, step}
         end)
 
-      # Collect ALL results (deadline-based timeout, no short-circuit)
       step_outcomes = collect_all_results(task_entries, level_start)
 
-      # Process outcomes
-      {new_results, checkpoint, error} =
-        process_outcomes(step_outcomes, results, checkpoint, run_ctx)
+      {new_results, checkpoint_state, checkpoint, error} =
+        process_outcomes(step_outcomes, results, checkpoint_state, checkpoint, run_ctx)
 
       case error do
         nil ->
-          execute_levels(rest, workflow, new_results, run_ctx, checkpoint)
+          # Save snapshot after each level
+          checkpoint_state = save_snapshot_after_level(checkpoint_state, checkpoint, run_ctx)
+          execute_levels(rest, workflow, new_results, run_ctx, checkpoint_state, checkpoint)
 
         %Error{} = err ->
-          {:error, err}
+          {:error, err, Map.delete(new_results, :input), checkpoint_state, checkpoint}
       end
     end
   end
@@ -518,45 +649,113 @@ defmodule Agora.Workflow.Executor do
 
   # --- Outcome processing ---
 
-  defp process_outcomes(step_outcomes, results, checkpoint, run_ctx) do
-    Enum.reduce(step_outcomes, {results, checkpoint, nil}, fn
-      {step, outcome}, {results, checkpoint, error} ->
-        results = Map.put(results, step.id, outcome)
+  defp process_outcomes(step_outcomes, results, checkpoint_state, checkpoint, run_ctx) do
+    # Collect all outcomes, then update checkpoint once for the entire level
+    {results, cs, error, level_results} =
+      Enum.reduce(step_outcomes, {results, checkpoint_state, nil, %{}}, fn
+        {step, outcome}, {results, cs, error, level_results} ->
+          results = Map.put(results, step.id, outcome)
+          level_results = Map.put(level_results, step.id, outcome)
 
-        # Save successful results to checkpoint
-        {checkpoint, save_error} =
-          case {outcome, checkpoint} do
-            {{:ok, _}, {_mod, _state} = cs} ->
-              case CheckpointStore.save(cs, step.id, outcome) do
-                {:ok, new_cs} ->
-                  {new_cs, nil}
+          # Save successful results to checkpoint store (legacy per-step save)
+          {cs, save_error} =
+            case {outcome, cs} do
+              {{:ok, _}, {_mod, _state} = store} ->
+                case CheckpointStore.save(store, step.id, outcome) do
+                  {:ok, new_store} ->
+                    {new_store, nil}
 
-                {:error, save_err} ->
-                  {checkpoint,
-                   Error.new(
-                     :workflow_error,
-                     "Checkpoint save failed for step #{inspect(step.id)}: #{save_err.message}"
-                   )}
-              end
+                  {:error, save_err} ->
+                    {cs,
+                     Error.new(
+                       :workflow_error,
+                       "Checkpoint save failed for step #{inspect(step.id)}: #{save_err.message}"
+                     )}
+                end
 
-            _ ->
-              {checkpoint, nil}
+              _ ->
+                {cs, nil}
+            end
+
+          error =
+            case {outcome, run_ctx.on_failure, error, save_error} do
+              {{:error, %Error{type: :cancelled} = err}, _, nil, _} -> err
+              {{:error, err}, :abort, nil, _} -> err
+              {_, _, nil, %Error{} = se} -> se
+              _ -> error
+            end
+
+          {results, cs, error, level_results}
+      end)
+
+    # Update checkpoint once with all level results
+    cp =
+      if checkpoint && map_size(level_results) > 0,
+        do: Checkpoint.record_level_results(checkpoint, level_results),
+        else: checkpoint
+
+    {results, cs, cp, error}
+  end
+
+  # --- Snapshot save/finalize ---
+
+  defp save_snapshot_after_level(nil, _checkpoint, _run_ctx), do: nil
+  defp save_snapshot_after_level(cs, nil, _run_ctx), do: cs
+
+  defp save_snapshot_after_level(cs, checkpoint, run_ctx) do
+    case CheckpointStore.save_snapshot(cs, checkpoint) do
+      {:ok, new_cs} ->
+        Agora.Telemetry.emit(
+          [:agora, :workflow, :checkpoint, :save],
+          %{system_time: System.system_time()},
+          Map.merge(run_ctx.telemetry_metadata, %{
+            checkpoint_id: checkpoint.id,
+            version: checkpoint.version,
+            step_count: MapSet.size(checkpoint.completed_steps)
+          })
+        )
+
+        new_cs
+
+      {:error, _} ->
+        # Snapshot save failure is non-fatal — fall back to per-step save
+        cs
+    end
+  end
+
+  defp finalize_checkpoint(nil, _checkpoint, _status, _results, _run_ctx), do: :ok
+  defp finalize_checkpoint(_cs, nil, _status, _results, _run_ctx), do: :ok
+
+  defp finalize_checkpoint(cs, checkpoint, status, results, run_ctx) do
+    finalized = %{Checkpoint.finalize(checkpoint, status) | results: results}
+
+    case CheckpointStore.save_snapshot(cs, finalized) do
+      {:ok, _} ->
+        Agora.Telemetry.emit(
+          [:agora, :workflow, :checkpoint, :finalize],
+          %{system_time: System.system_time()},
+          Map.merge(run_ctx.telemetry_metadata, %{
+            checkpoint_id: finalized.id,
+            status: finalized.status,
+            version: finalized.version
+          })
+        )
+
+        # Apply retention after successful completion (best-effort)
+        if status == :completed && run_ctx.retention && run_ctx.checkpoint_config do
+          try do
+            Checkpoint.apply_retention(run_ctx.checkpoint_config, run_ctx.retention)
+          rescue
+            _ -> :ok
+          catch
+            _, _ -> :ok
           end
+        end
 
-        # Track first error: cancellation is always terminal,
-        # step failure respects on_failure mode,
-        # checkpoint save failure is always fatal (integrity guarantee)
-        error =
-          case {outcome, run_ctx.on_failure, error, save_error} do
-            # Cancellation is always terminal regardless of on_failure mode
-            {{:error, %Error{type: :cancelled} = err}, _, nil, _} -> err
-            {{:error, err}, :abort, nil, _} -> err
-            {_, _, nil, %Error{} = se} -> se
-            _ -> error
-          end
-
-        {results, checkpoint, error}
-    end)
+      {:error, _} ->
+        # Best-effort finalization
+        :ok
+    end
   end
 
   # --- on_event callback (safe-wrapped) ---

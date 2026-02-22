@@ -152,4 +152,62 @@ defmodule Agora.Workflow.CheckpointStoreTest do
       assert {:ok, %{}} = CheckpointStore.load_all(store, [:a])
     end
   end
+
+  describe "optional callback dispatch" do
+    test "save_snapshot returns error for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      checkpoint = %Agora.Workflow.Checkpoint{id: "test", workflow_hash: "hash"}
+
+      assert {:error, %Error{message: msg}} = CheckpointStore.save_snapshot(store, checkpoint)
+      assert msg =~ "does not implement save_snapshot"
+    end
+
+    test "load_snapshot returns nil for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      assert {:ok, nil} = CheckpointStore.load_snapshot(store, "test_id")
+    end
+
+    test "list_snapshots returns empty list for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      assert {:ok, []} = CheckpointStore.list_snapshots(store)
+    end
+
+    test "lock returns no-op for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      assert {:ok, ^store} = CheckpointStore.lock(store, "test_id")
+    end
+
+    test "unlock returns no-op for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      assert {:ok, ^store} = CheckpointStore.unlock(store, "test_id")
+    end
+
+    test "delete_snapshot returns no-op for backend without support" do
+      {:ok, store} = CheckpointStore.init({GoodBackend, []})
+      assert {:ok, ^store} = CheckpointStore.delete_snapshot(store, "test_id", 1)
+    end
+
+    test "save_snapshot dispatches to Memory backend" do
+      {:ok, store} = CheckpointStore.init({Agora.Workflow.CheckpointStore.Memory, []})
+
+      checkpoint = %Agora.Workflow.Checkpoint{
+        id: "chk_dispatch",
+        workflow_hash: "hash",
+        version: 1,
+        status: :in_progress,
+        created_at: DateTime.utc_now(),
+        updated_at: DateTime.utc_now()
+      }
+
+      assert {:ok, {Agora.Workflow.CheckpointStore.Memory, _}} =
+               CheckpointStore.save_snapshot(store, checkpoint)
+    end
+
+    test "lock dispatches to Memory backend" do
+      {:ok, store} = CheckpointStore.init({Agora.Workflow.CheckpointStore.Memory, []})
+
+      assert {:ok, {Agora.Workflow.CheckpointStore.Memory, _}} =
+               CheckpointStore.lock(store, "chk_dispatch")
+    end
+  end
 end

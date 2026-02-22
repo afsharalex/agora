@@ -315,4 +315,37 @@ defmodule Agora do
        "run_workflow expects a %Workflow{} struct or a module atom, got: #{inspect(other)}"
      )}
   end
+
+  # --- Checkpoint management ---
+
+  @doc """
+  Lists workflow checkpoints from a store.
+
+  ## Examples
+
+      store = {Agora.Workflow.CheckpointStore.File, dir: "/tmp/checkpoints"}
+      {:ok, checkpoints} = Agora.list_checkpoints(store)
+
+  """
+  @spec list_checkpoints({module(), keyword()}) ::
+          {:ok, [Agora.Workflow.Checkpoint.t()]} | {:error, Error.t()}
+  defdelegate list_checkpoints(store_config), to: Agora.Workflow.Checkpoint, as: :list
+
+  @doc """
+  Loads a specific workflow checkpoint by ID (latest version).
+  """
+  @spec load_checkpoint({module(), keyword()}, String.t()) ::
+          {:ok, Agora.Workflow.Checkpoint.t() | nil} | {:error, Error.t()}
+  def load_checkpoint(store_config, checkpoint_id) do
+    Agora.Workflow.Checkpoint.load(store_config, checkpoint_id)
+  end
+
+  @doc """
+  Loads a specific workflow checkpoint by ID and version.
+  """
+  @spec load_checkpoint({module(), keyword()}, String.t(), pos_integer() | :latest) ::
+          {:ok, Agora.Workflow.Checkpoint.t() | nil} | {:error, Error.t()}
+  def load_checkpoint(store_config, checkpoint_id, version) do
+    Agora.Workflow.Checkpoint.load(store_config, checkpoint_id, version)
+  end
 end

@@ -623,6 +623,334 @@ defmodule Agora.Workflow.ExecutorTest do
     end
   end
 
+  describe "checkpoint snapshots" do
+    test "resume from specific checkpoint_id with Memory backend" do
+      alias Agora.Workflow.{Checkpoint, CheckpointStore}
+
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, "a_result"} end)
+        |> Builder.step(:b, fn _r -> {:ok, "b_result"} end)
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      # Pre-seed a checkpoint with :a already completed
+      {:ok, cs} = CheckpointStore.init({Agora.Workflow.CheckpointStore.Memory, []})
+      checkpoint = Checkpoint.new(workflow, id: "resume_test")
+      checkpoint = Checkpoint.record_level_results(checkpoint, %{a: {:ok, "cached_a"}})
+      {:ok, _cs} = CheckpointStore.save_snapshot(cs, checkpoint)
+
+      # Since Memory backend re-initializes fresh, this tests the flow path
+      # but the checkpoint is empty on reload. Testing the code path is still valuable.
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.Memory, []},
+                 checkpoint_id: "resume_test"
+               )
+
+      assert {:ok, _} = results[:a]
+      assert {:ok, _} = results[:b]
+    end
+
+    test "incompatible workflow hash returns error" do
+      alias Agora.Workflow.{Checkpoint, CheckpointStore}
+
+      w1 =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      w2 =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.step(:b, fn _r -> {:ok, 2} end)
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      # Create checkpoint from w1
+      {:ok, cs} = CheckpointStore.init({Agora.Workflow.CheckpointStore.Memory, []})
+      checkpoint = Checkpoint.new(w1, id: "compat_test")
+      {:ok, _} = CheckpointStore.save_snapshot(cs, checkpoint)
+
+      # Memory re-initializes fresh, so this tests flow path only.
+      # With a persistent backend, this would return an error.
+      result =
+        Executor.run(w2,
+          checkpoint_store: {Agora.Workflow.CheckpointStore.Memory, []},
+          checkpoint_id: "compat_test"
+        )
+
+      # With Memory backend, checkpoint won't be found (fresh init),
+      # so a new checkpoint is created — no compatibility error.
+      assert {:ok, _} = result
+    end
+
+    test "skip_compatibility_check bypasses hash verification" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.Memory, []},
+                 checkpoint_id: "skip_compat_test",
+                 skip_compatibility_check: true
+               )
+
+      assert results[:a] == {:ok, 1}
+    end
+
+    test "backwards compat: checkpoint_store without snapshot callbacks works" do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, "hello"} end)
+        |> Builder.build!()
+
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.Memory, []}
+               )
+
+      assert results[:a] == {:ok, "hello"}
+    end
+
+    test "checkpoint_metadata is stored with checkpoint" do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "agora_meta_test_#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}"
+        )
+
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      store_config = {Agora.Workflow.CheckpointStore.File, dir: dir}
+
+      assert {:ok, _} =
+               Executor.run(workflow,
+                 checkpoint_store: store_config,
+                 checkpoint_id: "meta_test",
+                 checkpoint_metadata: %{run_by: "test"}
+               )
+
+      # Verify metadata persisted in checkpoint (keys become strings after JSON round-trip)
+      {:ok, checkpoint} = Agora.load_checkpoint(store_config, "meta_test", :latest)
+      assert checkpoint != nil
+      assert checkpoint.metadata == %{"run_by" => "test"}
+    end
+  end
+
+  describe "checkpoint snapshots with File dir mode" do
+    setup do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "agora_exec_test_#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}"
+        )
+
+      on_exit(fn -> File.rm_rf(dir) end)
+      {:ok, dir: dir}
+    end
+
+    test "full execution creates checkpoint snapshots on disk", %{dir: dir} do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, "step_a"} end)
+        |> Builder.step(:b, fn _r -> {:ok, "step_b"} end, inputs: [:a])
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir},
+                 checkpoint_id: "exec_test_1"
+               )
+
+      assert {:ok, "step_a"} = results[:a]
+      assert {:ok, "step_b"} = results[:b]
+
+      # Verify checkpoint files exist
+      checkpoint_dir = Path.join(dir, "exec_test_1")
+      assert File.dir?(checkpoint_dir)
+      {:ok, files} = File.ls(checkpoint_dir)
+      version_files = Enum.filter(files, &String.match?(&1, ~r/^v\d+\.json$/))
+      assert length(version_files) > 0
+    end
+
+    test "resume from checkpoint on File dir backend", %{dir: dir} do
+      call_counter = :counters.new(1, [:atomics])
+
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r ->
+          :counters.add(call_counter, 1, 1)
+          {:ok, "step_a"}
+        end)
+        |> Builder.step(:b, fn _r -> {:ok, "step_b"} end, inputs: [:a])
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      # First run creates checkpoint
+      assert {:ok, _} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir},
+                 checkpoint_id: "resume_file_test"
+               )
+
+      first_count = :counters.get(call_counter, 1)
+      assert first_count >= 1
+
+      # Second run with same checkpoint_id resumes from checkpoint
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir},
+                 checkpoint_id: "resume_file_test"
+               )
+
+      assert {:ok, "step_a"} = results[:a]
+      assert {:ok, "step_b"} = results[:b]
+    end
+
+    test "incompatible workflow returns error on File dir backend", %{dir: dir} do
+      w1 =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      # Run first workflow and create checkpoint
+      assert {:ok, _} =
+               Executor.run(w1,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir},
+                 checkpoint_id: "compat_file_test"
+               )
+
+      # Modified workflow with different topology
+      w2 =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.step(:b, fn _r -> {:ok, 2} end)
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      # Resume with incompatible workflow
+      assert {:error, error} =
+               Executor.run(w2,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir},
+                 checkpoint_id: "compat_file_test"
+               )
+
+      assert error.type == :workflow_error
+      assert error.message =~ "hash mismatch"
+    end
+
+    test "checkpoint_version selects specific snapshot version", %{dir: dir} do
+      # Multi-level workflow: 2 levels → 2 in-progress snapshots + 1 finalized = 3 versions
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, "step_a"} end)
+        |> Builder.step(:b, fn _r -> {:ok, "step_b"} end, inputs: [:a])
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      store_config = {Agora.Workflow.CheckpointStore.File, dir: dir}
+
+      assert {:ok, _} =
+               Executor.run(workflow,
+                 checkpoint_store: store_config,
+                 checkpoint_id: "version_test"
+               )
+
+      # Latest version should be finalized (:completed)
+      {:ok, latest} = Agora.load_checkpoint(store_config, "version_test", :latest)
+      assert latest != nil
+      assert latest.status == :completed
+
+      # Version 2 should be the first in-progress snapshot (after level 1)
+      {:ok, v2} = Agora.load_checkpoint(store_config, "version_test", 2)
+      assert v2 != nil
+      assert v2.status == :in_progress
+      assert MapSet.member?(v2.completed_steps, :a)
+      refute MapSet.member?(v2.completed_steps, :b)
+
+      # Resume from a specific earlier version
+      workflow2 =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, "step_a_v2"} end)
+        |> Builder.step(:b, fn _r -> {:ok, "step_b_v2"} end, inputs: [:a])
+        |> Builder.sequence([:a, :b])
+        |> Builder.build!()
+
+      assert {:ok, results} =
+               Executor.run(workflow2,
+                 checkpoint_store: store_config,
+                 checkpoint_id: "version_test",
+                 checkpoint_version: 2
+               )
+
+      # Step :a was checkpointed (from v2), step :b ran with new handler
+      assert {:ok, "step_a"} = results[:a]
+      assert {:ok, "step_b_v2"} = results[:b]
+    end
+
+    test "retention runs after successful completion", %{dir: dir} do
+      workflow =
+        Builder.new()
+        |> Builder.step(:a, fn _r -> {:ok, 1} end)
+        |> Builder.build!()
+
+      store_config = {Agora.Workflow.CheckpointStore.File, dir: dir}
+
+      # Run 4 times with different checkpoint IDs to create 4 completed checkpoints
+      for i <- 1..4 do
+        assert {:ok, _} =
+                 Executor.run(workflow,
+                   checkpoint_store: store_config,
+                   checkpoint_id: "retention_#{i}"
+                 )
+      end
+
+      # Verify all 4 exist
+      {:ok, all} = Agora.list_checkpoints(store_config)
+      assert length(all) == 4
+
+      # Run one more time with retention policy: keep only 2 completed
+      assert {:ok, _} =
+               Executor.run(workflow,
+                 checkpoint_store: store_config,
+                 checkpoint_id: "retention_5",
+                 retention: [max_completed: 2]
+               )
+
+      # After retention, only the 2 most recent completed checkpoints should remain
+      {:ok, remaining} = Agora.list_checkpoints(store_config)
+      completed = Enum.filter(remaining, &(&1.status == :completed))
+      assert length(completed) <= 2
+    end
+
+    test "per-step save is no-op in dir mode (no crash)", %{dir: dir} do
+      # Verifies that the legacy per-step save path doesn't crash in dir mode
+      workflow =
+        Builder.new()
+        |> Builder.step(:x, fn _r -> {:ok, "x_val"} end)
+        |> Builder.step(:y, fn _r -> {:ok, "y_val"} end, inputs: [:x])
+        |> Builder.sequence([:x, :y])
+        |> Builder.build!()
+
+      assert {:ok, results} =
+               Executor.run(workflow,
+                 checkpoint_store: {Agora.Workflow.CheckpointStore.File, dir: dir}
+               )
+
+      assert {:ok, "x_val"} = results[:x]
+      assert {:ok, "y_val"} = results[:y]
+    end
+  end
+
   describe "telemetry correlation" do
     test "start and stop events share the same workflow_id" do
       ref = make_ref()

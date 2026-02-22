@@ -38,6 +38,9 @@ defmodule Agora.Workflow.CheckpointStore do
   """
 
   alias Agora.Error
+  alias Agora.Workflow.Checkpoint
+
+  # --- Required callbacks ---
 
   @doc "Initialize backend state from config options."
   @callback init(config :: keyword()) :: {:ok, state :: term()} | {:error, Error.t()}
@@ -55,6 +58,49 @@ defmodule Agora.Workflow.CheckpointStore do
 
   @doc "Remove all checkpointed results."
   @callback clear(state :: term()) :: {:ok, state :: term()} | {:error, Error.t()}
+
+  # --- Optional callbacks for snapshot support ---
+
+  @doc "Save a complete checkpoint snapshot (append-only versioning)."
+  @callback save_snapshot(state :: term(), checkpoint :: Checkpoint.t()) ::
+              {:ok, state :: term()} | {:error, Error.t()}
+
+  @doc "Load a checkpoint snapshot by ID and version."
+  @callback load_snapshot(
+              state :: term(),
+              checkpoint_id :: String.t(),
+              version :: pos_integer() | :latest
+            ) ::
+              {:ok, Checkpoint.t() | nil} | {:error, Error.t()}
+
+  @doc "List all checkpoint snapshots."
+  @callback list_snapshots(state :: term()) ::
+              {:ok, [Checkpoint.t()]} | {:error, Error.t()}
+
+  @doc "Delete a specific checkpoint snapshot version."
+  @callback delete_snapshot(
+              state :: term(),
+              checkpoint_id :: String.t(),
+              version :: pos_integer()
+            ) ::
+              {:ok, state :: term()} | {:error, Error.t()}
+
+  @doc "Acquire an advisory lock for a checkpoint ID."
+  @callback lock(state :: term(), checkpoint_id :: String.t()) ::
+              {:ok, state :: term()} | {:error, Error.t()}
+
+  @doc "Release an advisory lock for a checkpoint ID."
+  @callback unlock(state :: term(), checkpoint_id :: String.t()) ::
+              {:ok, state :: term()} | {:error, Error.t()}
+
+  @optional_callbacks [
+    save_snapshot: 2,
+    load_snapshot: 3,
+    list_snapshots: 1,
+    delete_snapshot: 3,
+    lock: 2,
+    unlock: 2
+  ]
 
   # --- Dispatch functions ---
 
@@ -140,6 +186,116 @@ defmodule Agora.Workflow.CheckpointStore do
     case safe_call(module, :clear, [state]) do
       {:ok, new_state} -> {:ok, {module, new_state}}
       {:error, _} = error -> error
+    end
+  end
+
+  # --- Snapshot dispatch functions ---
+
+  @doc """
+  Saves a complete checkpoint snapshot.
+
+  Returns `{:ok, {module, new_state}}` or `{:error, %Error{}}`.
+  Backends without `save_snapshot/2` return a degraded-mode error.
+  """
+  @spec save_snapshot({module(), term()}, Checkpoint.t()) ::
+          {:ok, {module(), term()}} | {:error, Error.t()}
+  def save_snapshot({module, state}, %Checkpoint{} = checkpoint) do
+    if function_exported?(module, :save_snapshot, 2) do
+      case safe_call(module, :save_snapshot, [state, checkpoint]) do
+        {:ok, new_state} -> {:ok, {module, new_state}}
+        error -> error
+      end
+    else
+      {:error,
+       Error.new(
+         :workflow_error,
+         "Backend #{inspect(module)} does not implement save_snapshot/2; " <>
+           "snapshot versioning unavailable"
+       )}
+    end
+  end
+
+  @doc """
+  Loads a checkpoint snapshot by ID and version.
+
+  Backends without `load_snapshot/3` return `{:ok, nil}`.
+  """
+  @spec load_snapshot({module(), term()}, String.t(), pos_integer() | :latest) ::
+          {:ok, Checkpoint.t() | nil} | {:error, Error.t()}
+  def load_snapshot({module, state}, checkpoint_id, version \\ :latest) do
+    if function_exported?(module, :load_snapshot, 3) do
+      safe_call(module, :load_snapshot, [state, checkpoint_id, version])
+    else
+      {:ok, nil}
+    end
+  end
+
+  @doc """
+  Lists all checkpoint snapshots.
+
+  Backends without `list_snapshots/1` return `{:ok, []}`.
+  """
+  @spec list_snapshots({module(), term()}) ::
+          {:ok, [Checkpoint.t()]} | {:error, Error.t()}
+  def list_snapshots({module, state}) do
+    if function_exported?(module, :list_snapshots, 1) do
+      safe_call(module, :list_snapshots, [state])
+    else
+      {:ok, []}
+    end
+  end
+
+  @doc """
+  Deletes a specific checkpoint snapshot version.
+
+  Backends without `delete_snapshot/3` return `{:ok, {module, state}}` (no-op).
+  """
+  @spec delete_snapshot({module(), term()}, String.t(), pos_integer()) ::
+          {:ok, {module(), term()}} | {:error, Error.t()}
+  def delete_snapshot({module, state}, checkpoint_id, version) do
+    if function_exported?(module, :delete_snapshot, 3) do
+      case safe_call(module, :delete_snapshot, [state, checkpoint_id, version]) do
+        {:ok, new_state} -> {:ok, {module, new_state}}
+        error -> error
+      end
+    else
+      {:ok, {module, state}}
+    end
+  end
+
+  @doc """
+  Acquires an advisory lock for a checkpoint ID.
+
+  Backends without `lock/2` return `{:ok, {module, state}}` (no-op).
+  """
+  @spec lock({module(), term()}, String.t()) ::
+          {:ok, {module(), term()}} | {:error, Error.t()}
+  def lock({module, state}, checkpoint_id) do
+    if function_exported?(module, :lock, 2) do
+      case safe_call(module, :lock, [state, checkpoint_id]) do
+        {:ok, new_state} -> {:ok, {module, new_state}}
+        error -> error
+      end
+    else
+      {:ok, {module, state}}
+    end
+  end
+
+  @doc """
+  Releases an advisory lock for a checkpoint ID.
+
+  Backends without `unlock/2` return `{:ok, {module, state}}` (no-op).
+  """
+  @spec unlock({module(), term()}, String.t()) ::
+          {:ok, {module(), term()}} | {:error, Error.t()}
+  def unlock({module, state}, checkpoint_id) do
+    if function_exported?(module, :unlock, 2) do
+      case safe_call(module, :unlock, [state, checkpoint_id]) do
+        {:ok, new_state} -> {:ok, {module, new_state}}
+        error -> error
+      end
+    else
+      {:ok, {module, state}}
     end
   end
 

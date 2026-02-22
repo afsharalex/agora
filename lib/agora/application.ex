@@ -13,7 +13,8 @@ defmodule Agora.Application do
       {Task.Supervisor, name: Agora.WorkflowTaskSupervisor},
       {Task.Supervisor, name: Agora.StreamSupervisor},
       Agora.Agent.Supervisor,
-      Agora.Orchestrator.RunnerSupervisor
+      Agora.Orchestrator.RunnerSupervisor,
+      Agora.Workflow.HandlerRegistry.Default
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

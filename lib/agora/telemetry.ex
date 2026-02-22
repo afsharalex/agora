@@ -3,8 +3,8 @@ defmodule Agora.Telemetry do
   Telemetry helpers and canonical event documentation for the Agora framework.
 
   This module provides thin wrappers around `:telemetry` functions and serves
-  as the single reference for all telemetry events emitted by Agora (29 events
-  across 11 event prefixes).
+  as the single reference for all telemetry events emitted by Agora (33 events
+  across 12 event prefixes).
 
   ## Event Reference
 
@@ -116,6 +116,18 @@ defmodule Agora.Telemetry do
   The `:memory_error` event fires when memory save or reload fails after a streaming
   run completes. The stream has already been closed (`:done` sent to caller), so this
   error cannot be communicated via the stream. The agent transitions to `:idle` regardless.
+
+  ### Checkpoint Events
+
+  Emitted by `Agora.Workflow.Executor` for checkpoint lifecycle operations.
+  All use `Agora.Telemetry.emit/3`.
+
+  | Event | Emitted By | Measurements | Metadata |
+  |---|---|---|---|
+  | `[:agora, :workflow, :checkpoint, :save]` | `Executor.save_snapshot_after_level/3` | `%{system_time}` | `%{checkpoint_id, version, step_count}` |
+  | `[:agora, :workflow, :checkpoint, :load]` | `Executor.resolve_checkpoint/6` | `%{system_time}` | `%{checkpoint_id, version, loaded_steps}` |
+  | `[:agora, :workflow, :checkpoint, :finalize]` | `Executor.finalize_checkpoint/5` | `%{system_time}` | `%{checkpoint_id, status, version}` |
+  | `[:agora, :workflow, :checkpoint, :lock]` | `Executor.maybe_lock/3` | `%{system_time}` | `%{checkpoint_id, acquired}` |
 
   ### Mode Events
 
