@@ -24,7 +24,7 @@ Agora is a framework for building collaborative AI agents on the BEAM. Define ag
 ## Features
 
 - **Agent-first** -- Define agents with `Agora.agent/3`, compose them with seven built-in coordination patterns
-- **Provider-agnostic** -- Unified interface across Anthropic, OpenAI, and custom LLM providers
+- **Provider-agnostic** -- Unified interface across Anthropic, OpenAI, Gemini, Ollama, and custom LLM providers
 - **BEAM-native** -- Agents as supervised processes, tool execution via `Task.Supervisor`, per-run supervision trees
 - **Structured errors** -- Typed `{:ok, result} | {:error, %Error{}}` tuples throughout (no exceptions for control flow)
 - **Agent-as-tool** -- Wrap any agent as a tool for hierarchical composition with depth-guarded recursion
@@ -155,6 +155,8 @@ See the [Composition](guides/composition.md) guide for the full pattern catalog.
 |----------|--------|--------|
 | Anthropic | `Agora.Provider.Anthropic` | Available |
 | OpenAI | `Agora.Provider.OpenAI` | Available |
+| Gemini | `Agora.Provider.Gemini` | Available |
+| Ollama | `Agora.Provider.Ollama` | Available |
 | Echo (test) | `Agora.Provider.Echo` | Available |
 
 ```elixir

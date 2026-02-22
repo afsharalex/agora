@@ -16,6 +16,14 @@ defmodule Agora.ProviderTest do
       assert {:ok, Agora.Provider.OpenAI} = Provider.resolve(:openai)
     end
 
+    test "resolves :gemini to Gemini provider" do
+      assert {:ok, Agora.Provider.Gemini} = Provider.resolve(:gemini)
+    end
+
+    test "resolves :ollama to Ollama provider" do
+      assert {:ok, Agora.Provider.Ollama} = Provider.resolve(:ollama)
+    end
+
     test "resolves a custom module implementing chat/2" do
       assert {:ok, Agora.Provider.Echo} = Provider.resolve(Agora.Provider.Echo)
     end

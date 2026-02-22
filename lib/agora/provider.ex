@@ -12,6 +12,8 @@ defmodule Agora.Provider do
       :echo      → Agora.Provider.Echo
       :anthropic → Agora.Provider.Anthropic
       :openai    → Agora.Provider.OpenAI
+      :gemini    → Agora.Provider.Gemini
+      :ollama    → Agora.Provider.Ollama
 
   Any other atom is checked for a module that exports `chat/2`.
   """
@@ -28,7 +30,9 @@ defmodule Agora.Provider do
   @known_providers %{
     echo: Agora.Provider.Echo,
     anthropic: Agora.Provider.Anthropic,
-    openai: Agora.Provider.OpenAI
+    openai: Agora.Provider.OpenAI,
+    gemini: Agora.Provider.Gemini,
+    ollama: Agora.Provider.Ollama
   }
 
   @doc """

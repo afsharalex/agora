@@ -37,7 +37,7 @@ Guidance for coding agents working in this repository.
 ## Project Layout
 
 - `lib/agora/*.ex`: core types/config (`AgentConfig`, `Message`, `Error`, etc.).
-- `lib/agora/provider/*.ex`: provider implementations (`Echo`, `Anthropic`, `OpenAI`).
+- `lib/agora/provider/*.ex`: provider implementations (`Echo`, `Anthropic`, `OpenAI`, `Gemini`, `Ollama`).
 - `test/agora/**/*.exs`: unit tests mirroring source module structure.
 - `config/config.exs`: default app config values.
 - `config/runtime.exs`: runtime API key wiring from environment variables.
@@ -137,6 +137,8 @@ mix run examples/workflow.exs
   - `ANTHROPIC_API_KEY`
   - `OPENAI_API_KEY`
   - `GOOGLE_API_KEY`
+  - `GEMINI_API_KEY`
+  - `OLLAMA_API_KEY`
 
 ## Documentation Conventions
 

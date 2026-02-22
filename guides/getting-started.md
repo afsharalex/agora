@@ -5,7 +5,7 @@ This tutorial walks you through installing Agora, defining agents, composing the
 ## Prerequisites
 
 - Elixir 1.19+ and Erlang/OTP 27+
-- An API key from [Anthropic](https://console.anthropic.com/) or [OpenAI](https://platform.openai.com/) (optional -- the Echo provider works without one)
+- An API key from [Anthropic](https://console.anthropic.com/), [OpenAI](https://platform.openai.com/), or [Google AI Studio](https://aistudio.google.com/) (optional -- the Echo provider and local [Ollama](https://ollama.com/) work without one)
 
 ## Installation
 
@@ -151,7 +151,7 @@ config = Agora.agent(:anthropic, "claude-sonnet-4-20250514",
 
 - [Agents](agents.md) -- Agent lifecycle, memory, middleware
 - [Composition](composition.md) -- All coordination patterns and the decision framework
-- [Providers](providers.md) -- Configure Anthropic, OpenAI, or build a custom provider
+- [Providers](providers.md) -- Configure Anthropic, OpenAI, Gemini, Ollama, or build a custom provider
 - [Tools](tools.md) -- Create custom tools for your agents
 - [Middleware](middleware.md) -- Add logging, timeouts, and token budgets
 - [Orchestration](orchestration.md) -- Custom orchestrators and termination conditions

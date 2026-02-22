@@ -26,7 +26,7 @@ Agora is a multi-agent runtime framework for Elixir. See `docs/internal/adr.md` 
 AgentConfig → Provider.chat(messages, config) → {:ok, Message.t()} | {:error, Error.t()}
 ```
 
-All LLM interaction flows through the `Agora.Provider` behaviour. Providers translate between Agora's internal message format and provider-specific API formats (Anthropic Messages API, OpenAI Chat Completions).
+All LLM interaction flows through the `Agora.Provider` behaviour. Providers translate between Agora's internal message format and provider-specific API formats (Anthropic Messages API, OpenAI Chat Completions, Gemini API, Ollama Chat API).
 
 ### Public API
 
@@ -61,6 +61,8 @@ All providers follow the same pattern: `fetch_api_key → build_request_body →
 - **Echo** (`Agora.Provider.Echo`) — 6 configurable modes for testing. No HTTP.
 - **Anthropic** (`Agora.Provider.Anthropic`) — System messages extracted to top-level param. Adjacent same-role messages merged (Anthropic requires alternating roles). Tool results sent as `user` role with `tool_result` content blocks.
 - **OpenAI** (`Agora.Provider.OpenAI`) — System messages stay inline. Tool arguments are JSON strings (encode on send, decode on receive with malformed fallback). One Agora `:tool` message with N results expands to N separate OpenAI `tool` messages.
+- **Gemini** (`Agora.Provider.Gemini`) — System messages extracted to `systemInstruction`. Adjacent same-role messages merged (parts-based). API key as query param. Tool calls use positional correlation with synthetic `gemini_tc_N` IDs. Streaming via SSE.
+- **Ollama** (`Agora.Provider.Ollama`) — System messages inline. Optional auth (no key required for local). Tool results use `tool_name` field (not `tool_call_id`). Synthetic `ollama_tc_N` IDs. Streaming via NDJSON. Default 120s timeout.
 
 ### HTTP Testing Pattern
 

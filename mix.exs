@@ -99,6 +99,8 @@ defmodule Agora.MixProject do
           Agora.Provider,
           Agora.Provider.Anthropic,
           Agora.Provider.OpenAI,
+          Agora.Provider.Gemini,
+          Agora.Provider.Ollama,
           Agora.Provider.Echo
         ],
         Tools: [
@@ -149,6 +151,7 @@ defmodule Agora.MixProject do
           Agora.Stream,
           Agora.StreamEvent,
           Agora.Provider.SSE,
+          Agora.Provider.NDJSON,
           Agora.Provider.StreamAccumulator
         ],
         Workflows: [

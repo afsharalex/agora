@@ -11,3 +11,11 @@ end
 if api_key = System.get_env("GOOGLE_API_KEY") do
   config :agora, google_api_key: api_key
 end
+
+if api_key = System.get_env("GEMINI_API_KEY") do
+  config :agora, gemini_api_key: api_key
+end
+
+if api_key = System.get_env("OLLAMA_API_KEY") do
+  config :agora, ollama_api_key: api_key
+end

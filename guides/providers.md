@@ -8,6 +8,8 @@ How to configure built-in providers and implement custom ones.
 |----------|--------|-----|
 | Anthropic | `Agora.Provider.Anthropic` | Messages API |
 | OpenAI | `Agora.Provider.OpenAI` | Chat Completions API |
+| Gemini | `Agora.Provider.Gemini` | Gemini API |
+| Ollama | `Agora.Provider.Ollama` | Ollama Chat API |
 | Echo | `Agora.Provider.Echo` | No HTTP (testing) |
 
 ## Set Up Anthropic
@@ -51,6 +53,63 @@ config = Agora.AgentConfig.new!(
   provider: :openai,
   model: "gpt-4o",
   instructions: "You are a helpful assistant."
+)
+```
+
+## Set Up Gemini
+
+Gemini accepts both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment variables.
+When both are set, `GEMINI_API_KEY` takes precedence.
+
+```elixir
+export GEMINI_API_KEY="AIza..."
+
+config = Agora.AgentConfig.new!(
+  provider: :gemini,
+  model: "gemini-2.0-flash",
+  instructions: "You are a helpful assistant."
+)
+```
+
+### Per-agent overrides
+
+```elixir
+config = Agora.AgentConfig.new!(
+  provider: :gemini,
+  model: "gemini-2.0-flash",
+  provider_opts: [
+    api_key: "AIza-different-key",
+    base_url: "https://my-proxy.example.com",
+    timeout: 60_000,
+    max_tokens: 8192
+  ]
+)
+```
+
+## Set Up Ollama
+
+Ollama runs locally and does not require an API key by default.
+
+```elixir
+# No environment variable needed for local Ollama
+config = Agora.AgentConfig.new!(
+  provider: :ollama,
+  model: "llama3.2",
+  instructions: "You are a helpful assistant."
+)
+```
+
+### Per-agent overrides
+
+```elixir
+config = Agora.AgentConfig.new!(
+  provider: :ollama,
+  model: "llama3.2",
+  provider_opts: [
+    base_url: "http://remote-server:11434",
+    timeout: 120_000,
+    api_key: "optional-key-for-remote"
+  ]
 )
 ```
 
