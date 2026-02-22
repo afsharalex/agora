@@ -6,12 +6,13 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "sequential streaming" do
     test "emits step events in order" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end},
-          {:b, fn r ->
-            {:ok, val} = r[:a]
-            {:ok, val + 1}
-          end}
+          {:b,
+           fn r ->
+             {:ok, val} = r[:a]
+             {:ok, val + 1}
+           end}
         ])
 
       events = Enum.to_list(stream)
@@ -33,7 +34,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
 
     test "mode field is set to :sequential" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end}
         ])
 
@@ -46,7 +47,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "parallel streaming" do
     test "emits step events for concurrent branches" do
       {:ok, stream} =
-        Agora.run_mode_stream(:parallel, [
+        Agora.Execution.run_mode_stream(:parallel, [
           {:analyze, fn _r -> {:ok, :analyzed} end},
           {:summarize, fn _r -> {:ok, :summarized} end}
         ])
@@ -68,7 +69,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
         |> Agora.Workflow.Builder.step(:b, fn _r -> {:ok, 2} end)
         |> Agora.Workflow.Builder.build!()
 
-      {:ok, stream} = Agora.run_mode_stream(:dag, workflow)
+      {:ok, stream} = Agora.Execution.run_mode_stream(:dag, workflow)
 
       events = Enum.to_list(stream)
       types = Enum.map(events, & &1.type)
@@ -86,7 +87,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
         |> Agora.Workflow.Builder.step(:a, fn _r -> {:ok, 1} end)
         |> Agora.Workflow.Builder.build!()
 
-      {:ok, stream} = Agora.run_mode_stream(:dag, workflow)
+      {:ok, stream} = Agora.Execution.run_mode_stream(:dag, workflow)
 
       events = Enum.to_list(stream)
       started = Enum.find(events, &(&1.type == :mode_started))
@@ -97,7 +98,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "conditional streaming" do
     test "emits step events for matching branch" do
       {:ok, stream} =
-        Agora.run_mode_stream(
+        Agora.Execution.run_mode_stream(
           :conditional,
           {
             {:router, fn _r -> {:ok, :path_a} end},
@@ -130,7 +131,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "error handling" do
     test "workflow failure emits mode_failed" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:error, Error.new(:workflow_error, "boom")} end},
           {:b, fn _r -> {:ok, :never} end}
         ])
@@ -167,7 +168,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "all events are ModeEvent structs" do
     test "sequential mode" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end}
         ])
 
@@ -184,7 +185,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
         |> Agora.Workflow.Builder.step(:a, fn _r -> {:ok, 1} end)
         |> Agora.Workflow.Builder.build!()
 
-      {:ok, stream} = Agora.run_mode_stream(:dag, workflow)
+      {:ok, stream} = Agora.Execution.run_mode_stream(:dag, workflow)
       events = Enum.to_list(stream)
 
       for event <- events do
@@ -196,7 +197,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
   describe "early halt" do
     test "stream can be halted early with Enum.take" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end},
           {:b, fn _r -> {:ok, 2} end},
           {:c, fn _r -> {:ok, 3} end}
@@ -213,10 +214,22 @@ defmodule Agora.ExecutionWorkflowStreamTest do
 
     test "stream task is cleaned up after early halt" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
-          {:a, fn _r -> Process.sleep(10); {:ok, 1} end},
-          {:b, fn _r -> Process.sleep(10); {:ok, 2} end},
-          {:c, fn _r -> Process.sleep(10); {:ok, 3} end}
+        Agora.Execution.run_mode_stream(:sequential, [
+          {:a,
+           fn _r ->
+             Process.sleep(10)
+             {:ok, 1}
+           end},
+          {:b,
+           fn _r ->
+             Process.sleep(10)
+             {:ok, 2}
+           end},
+          {:c,
+           fn _r ->
+             Process.sleep(10)
+             {:ok, 3}
+           end}
         ])
 
       _events = Enum.take(stream, 1)
@@ -250,7 +263,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
       on_exit(fn -> :telemetry.detach(handler_id) end)
 
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end}
         ])
 
@@ -279,9 +292,13 @@ defmodule Agora.ExecutionWorkflowStreamTest do
       on_exit(fn -> :telemetry.detach(handler_id) end)
 
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
-          {:a, fn _r -> {:ok, 1} end}
-        ], telemetry_metadata: %{custom_key: :test_value})
+        Agora.Execution.run_mode_stream(
+          :sequential,
+          [
+            {:a, fn _r -> {:ok, 1} end}
+          ],
+          telemetry_metadata: %{custom_key: :test_value}
+        )
 
       _events = Enum.to_list(stream)
 
@@ -294,9 +311,13 @@ defmodule Agora.ExecutionWorkflowStreamTest do
 
     test "workflow ModeEvent structs carry telemetry_metadata in event.metadata" do
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
-          {:a, fn _r -> {:ok, 1} end}
-        ], telemetry_metadata: %{trace_id: "abc-123"})
+        Agora.Execution.run_mode_stream(
+          :sequential,
+          [
+            {:a, fn _r -> {:ok, 1} end}
+          ],
+          telemetry_metadata: %{trace_id: "abc-123"}
+        )
 
       events = Enum.to_list(stream)
 
@@ -313,7 +334,7 @@ defmodule Agora.ExecutionWorkflowStreamTest do
       Agora.EventBus.subscribe(:wf_stream_test)
 
       {:ok, stream} =
-        Agora.run_mode_stream(:sequential, [
+        Agora.Execution.run_mode_stream(:sequential, [
           {:a, fn _r -> {:ok, 1} end}
         ])
 

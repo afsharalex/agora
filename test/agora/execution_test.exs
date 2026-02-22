@@ -63,10 +63,7 @@ defmodule Agora.ExecutionTest do
 
         case n do
           1 ->
-            {:ok,
-             Message.assistant(
-               "PLAN\nSTEP:1:worker:Do the task\nEND_PLAN"
-             )}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Do the task\nEND_PLAN")}
 
           _ ->
             {:ok, Message.assistant("REVIEW:COMPLETE:Task done")}
@@ -244,9 +241,7 @@ defmodule Agora.ExecutionTest do
       ]
 
       {:ok, results} =
-        Execution.run_workflow(:parallel, branches,
-          from: {:src, fn _r -> {:ok, 0} end}
-        )
+        Execution.run_workflow(:parallel, branches, from: {:src, fn _r -> {:ok, 0} end})
 
       assert results[:src] == {:ok, 0}
       assert results[:a] == {:ok, 1}

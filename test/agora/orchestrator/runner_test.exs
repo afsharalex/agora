@@ -946,7 +946,8 @@ defmodule Agora.Orchestrator.RunnerTest do
 
       @impl true
       def init(config) do
-        {:ok, %{agent: hd(config.agent_names), error_message: config[:error_message] || "stalled"}}
+        {:ok,
+         %{agent: hd(config.agent_names), error_message: config[:error_message] || "stalled"}}
       end
 
       @impl true

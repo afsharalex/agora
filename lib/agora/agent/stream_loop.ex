@@ -302,7 +302,8 @@ defmodule Agora.Agent.StreamLoop do
         {:halt, error, [], metadata}
 
       false ->
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools)
+        context = build_tool_context(config)
+        {:ok, results} = ToolBroker.execute(tool_calls, config.tools, context)
 
         # Emit tool_result events via callback
         Enum.each(results, fn result ->
@@ -327,6 +328,17 @@ defmodule Agora.Agent.StreamLoop do
         else
           {:ok, results, metadata}
         end
+    end
+  end
+
+  # --- Private: Tool context ---
+
+  defp build_tool_context(config) do
+    base = %{agent_name: config.name}
+
+    case Keyword.get(config.provider_opts, :_agora_tool_depth) do
+      nil -> base
+      depth -> Map.put(base, :agora_tool_depth, depth)
     end
   end
 

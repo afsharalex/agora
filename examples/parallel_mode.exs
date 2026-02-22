@@ -1,13 +1,15 @@
-# Parallel Mode Example
+# Parallel Workflow Example
 #
-# Demonstrates fan-out/fan-in using run_mode(:parallel, ...).
+# Demonstrates fan-out/fan-in using the Workflow Patterns API.
 # A source step feeds two branches that run concurrently, then a sink merges results.
 #
 # Run with: mix run examples/parallel_mode.exs
 
-IO.puts("=== Parallel Mode (Fan-out/Fan-in) ===\n")
+alias Agora.Workflow.Patterns
 
-{:ok, results} = Agora.run_mode(:parallel,
+IO.puts("=== Parallel Workflow (Fan-out/Fan-in) ===\n")
+
+{:ok, workflow} = Patterns.parallel(
   [
     {:analyze, fn results ->
       {:ok, data} = results[:source]
@@ -33,6 +35,8 @@ IO.puts("=== Parallel Mode (Fan-out/Fan-in) ===\n")
   end}
 )
 
+{:ok, results} = Agora.run_workflow(workflow)
+
 {:ok, final} = results[:merge]
 IO.puts("\nMerged result: #{inspect(final)}")
-IO.puts("\n[Parallel mode complete]")
+IO.puts("\n[Parallel workflow complete]")

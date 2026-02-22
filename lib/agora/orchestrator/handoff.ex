@@ -262,14 +262,19 @@ defmodule Agora.Orchestrator.Handoff do
 
   defp validate_parse_handoff(config) do
     case Map.get(config, :parse_handoff) do
-      nil -> {:ok, nil}
-      fun when is_function(fun, 2) -> {:ok, fun}
+      nil ->
+        {:ok, nil}
+
+      fun when is_function(fun, 2) ->
+        {:ok, fun}
+
       fun when is_function(fun) ->
         {:error,
          Error.new(
            :orchestration_error,
            ":parse_handoff must be a 2-arity function, got function with arity #{Function.info(fun)[:arity]}"
          )}
+
       other ->
         {:error,
          Error.new(
@@ -354,8 +359,12 @@ defmodule Agora.Orchestrator.Handoff do
     message = Map.get(handoff, :message, fallback_content)
 
     case message do
-      nil -> {:ok, ""}
-      msg when is_binary(msg) -> {:ok, msg}
+      nil ->
+        {:ok, ""}
+
+      msg when is_binary(msg) ->
+        {:ok, msg}
+
       other ->
         {:error,
          Error.new(
@@ -464,7 +473,14 @@ defmodule Agora.Orchestrator.Handoff do
          :ok <- check_max_hops(state),
          :ok <- check_allowed_target(target, state),
          :ok <- check_no_repeat_window(target, state) do
-      events = [%{type: :handoff, from: state.current_agent, to: target, message: normalize_message(message)}]
+      events = [
+        %{
+          type: :handoff,
+          from: state.current_agent,
+          to: target,
+          message: normalize_message(message)
+        }
+      ]
 
       {:continue,
        %{

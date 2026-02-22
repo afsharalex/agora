@@ -422,7 +422,9 @@ defmodule Agora.Workflow.Executor do
   end
 
   defp execute_handler(%Step{handler: %AgentConfig{} = config} = step, results, run_ctx) do
-    config = maybe_inject_context_policy(config, run_ctx.context_policy, run_ctx.telemetry_metadata)
+    config =
+      maybe_inject_context_policy(config, run_ctx.context_policy, run_ctx.telemetry_metadata)
+
     message = build_agent_message(step, results)
 
     case Agora.Agent.Supervisor.start_agent(config) do

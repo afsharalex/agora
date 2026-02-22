@@ -1,13 +1,15 @@
-# Sequential Mode Example
+# Sequential Workflow Example
 #
-# Demonstrates a linear pipeline using run_mode(:sequential, ...).
+# Demonstrates a linear pipeline using the Workflow Patterns API.
 # Steps execute in order, each receiving the accumulated results map.
 #
 # Run with: mix run examples/sequential_mode.exs
 
-IO.puts("=== Sequential Mode (ETL Pipeline) ===\n")
+alias Agora.Workflow.Patterns
 
-{:ok, results} = Agora.run_mode(:sequential, [
+IO.puts("=== Sequential Workflow (ETL Pipeline) ===\n")
+
+{:ok, workflow} = Patterns.sequential([
   {:fetch, fn _results ->
     IO.puts("  [fetch] Loading raw data...")
     {:ok, ["alice", "bob", "carol"]}
@@ -26,6 +28,8 @@ IO.puts("=== Sequential Mode (ETL Pipeline) ===\n")
   end}
 ])
 
+{:ok, results} = Agora.run_workflow(workflow)
+
 {:ok, final} = results[:load]
 IO.puts("\nPipeline result: #{inspect(final)}")
-IO.puts("\n[Sequential mode complete]")
+IO.puts("\n[Sequential workflow complete]")

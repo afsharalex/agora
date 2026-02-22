@@ -650,7 +650,12 @@ defmodule Agora.Orchestrator.Runner do
         )
 
         step_result = if match?({:ok, _}, result), do: :ok, else: :error
-        emit_mode_event(state, :step_completed, %{agent: agent_name, turn: turn, result: step_result})
+
+        emit_mode_event(state, :step_completed, %{
+          agent: agent_name,
+          turn: turn,
+          result: step_result
+        })
 
         # Append turn to history
         turn_record = %{agent: agent_name, input: input_msg, output: result}

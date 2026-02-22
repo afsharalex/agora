@@ -142,7 +142,8 @@ defmodule Agora.Agent.Loop do
     case Provider.chat(config.provider, messages, config) do
       {:ok, %Message{tool_calls: tool_calls} = response} when tool_calls != [] ->
         messages = messages ++ [response]
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools)
+        context = build_tool_context(config)
+        {:ok, results} = ToolBroker.execute(tool_calls, config.tools, context)
         tool_msg = Message.tool_results(results)
         messages = messages ++ [tool_msg]
 
@@ -264,7 +265,8 @@ defmodule Agora.Agent.Loop do
           end
 
         messages = messages ++ [assistant_msg]
-        {:ok, results} = ToolBroker.execute(approved_calls, iter_config.tools)
+        context = build_tool_context(iter_config)
+        {:ok, results} = ToolBroker.execute(approved_calls, iter_config.tools, context)
 
         # Hook 4: after_tool_call
         ctx =
@@ -318,6 +320,15 @@ defmodule Agora.Agent.Loop do
         tool_calls_made: facts.tool_calls_made ++ Map.get(iter_facts, :tool_calls_made, []),
         tool_results: facts.tool_results ++ Map.get(iter_facts, :tool_results, [])
     }
+  end
+
+  defp build_tool_context(config) do
+    base = %{agent_name: config.name}
+
+    case Keyword.get(config.provider_opts, :_agora_tool_depth) do
+      nil -> base
+      depth -> Map.put(base, :agora_tool_depth, depth)
+    end
   end
 
   defp telemetry_metadata(%AgentConfig{} = config) do

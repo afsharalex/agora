@@ -27,3 +27,5 @@ agora-*.tar
 
 # AI stuff
 .claude/
+
+temp/

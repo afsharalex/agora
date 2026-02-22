@@ -11,9 +11,7 @@ defmodule Agora.ExecutionStreamTest do
   describe "single mode streaming" do
     test "collects full lifecycle events" do
       {:ok, stream} =
-        Agora.run_mode_stream(:single, "Hello",
-          agents: %{helper: echo_config()}
-        )
+        Agora.Execution.run_mode_stream(:single, "Hello", agents: %{helper: echo_config()})
 
       events = Enum.to_list(stream)
       types = Enum.map(events, & &1.type)
@@ -40,9 +38,7 @@ defmodule Agora.ExecutionStreamTest do
 
     test "events are all ModeEvent structs" do
       {:ok, stream} =
-        Agora.run_mode_stream(:single, "Hello",
-          agents: %{helper: echo_config()}
-        )
+        Agora.Execution.run_mode_stream(:single, "Hello", agents: %{helper: echo_config()})
 
       events = Enum.to_list(stream)
 
@@ -55,7 +51,7 @@ defmodule Agora.ExecutionStreamTest do
   describe "round_robin mode streaming" do
     test "emits multiple step cycles" do
       {:ok, stream} =
-        Agora.run_mode_stream(:round_robin, "Hello",
+        Agora.Execution.run_mode_stream(:round_robin, "Hello",
           agents: %{a: echo_config(), b: echo_config()},
           termination: TerminationCondition.max_turns(3)
         )
@@ -93,7 +89,7 @@ defmodule Agora.ExecutionStreamTest do
         )
 
       {:ok, stream} =
-        Agora.run_mode_stream(:handoff, "Hello",
+        Agora.Execution.run_mode_stream(:handoff, "Hello",
           agents: %{a: config, b: config},
           orchestrator_opts: [initial_agent: :a]
         )
@@ -115,7 +111,7 @@ defmodule Agora.ExecutionStreamTest do
       CancelToken.cancel(token)
 
       {:ok, stream} =
-        Agora.run_mode_stream(:single, "Hello",
+        Agora.Execution.run_mode_stream(:single, "Hello",
           agents: %{helper: echo_config()},
           cancel_token: token
         )
@@ -145,9 +141,7 @@ defmodule Agora.ExecutionStreamTest do
         )
 
       {:ok, stream} =
-        Agora.run_mode_stream(:single, "Hello",
-          agents: %{helper: config}
-        )
+        Agora.Execution.run_mode_stream(:single, "Hello", agents: %{helper: config})
 
       events = Enum.to_list(stream)
       types = Enum.map(events, & &1.type)
@@ -206,9 +200,7 @@ defmodule Agora.ExecutionStreamTest do
   describe "stream ownership enforcement" do
     test "raises when enumerated from wrong process" do
       {:ok, stream} =
-        Agora.run_mode_stream(:single, "Hello",
-          agents: %{helper: echo_config()}
-        )
+        Agora.Execution.run_mode_stream(:single, "Hello", agents: %{helper: echo_config()})
 
       task =
         Task.async(fn ->
@@ -331,7 +323,7 @@ defmodule Agora.ExecutionStreamTest do
         )
 
       {:ok, _result} =
-        Agora.run_mode(:round_robin, "Hello",
+        Agora.Execution.run(:round_robin, "Hello",
           agents: %{a: config, b: config},
           termination: TerminationCondition.max_turns(4),
           context_policy: policy
@@ -376,7 +368,7 @@ defmodule Agora.ExecutionStreamTest do
         )
 
       {:ok, _result} =
-        Agora.run_mode(:round_robin, "Hello",
+        Agora.Execution.run(:round_robin, "Hello",
           agents: %{a: config, b: config},
           termination: TerminationCondition.max_turns(4),
           context_policy: policy,
@@ -395,7 +387,7 @@ defmodule Agora.ExecutionStreamTest do
   describe "early halt" do
     test "stream can be halted early with Enum.take" do
       {:ok, stream} =
-        Agora.run_mode_stream(:round_robin, "Hello",
+        Agora.Execution.run_mode_stream(:round_robin, "Hello",
           agents: %{a: echo_config(), b: echo_config()},
           termination: TerminationCondition.max_turns(10)
         )
@@ -413,12 +405,12 @@ defmodule Agora.ExecutionStreamTest do
 
   describe "validation errors" do
     test "unknown mode returns error" do
-      result = Agora.run_mode_stream(:unknown, "Hello", agents: %{a: echo_config()})
+      result = Agora.Execution.run_mode_stream(:unknown, "Hello", agents: %{a: echo_config()})
       assert {:error, %Error{type: :config_error}} = result
     end
 
     test "missing agents returns error" do
-      result = Agora.run_mode_stream(:single, "Hello", [])
+      result = Agora.Execution.run_mode_stream(:single, "Hello", [])
       assert {:error, %Error{type: :config_error}} = result
     end
   end

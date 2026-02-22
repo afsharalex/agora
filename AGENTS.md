@@ -6,19 +6,23 @@ Guidance for coding agents working in this repository.
 
 - This project is an Elixir library (`:agora`) targeting Elixir `~> 1.19`.
 - Phases 0-10 are complete; current focus is stabilization, docs quality, and release readiness.
-- Architecture references live in `docs/internal/TODO.md`, `docs/internal/adr.md`, `CLAUDE.md`, and `docs/internal/Design-v0.md`.
+- Architecture references live in `docs/internal/adr.md`, `CLAUDE.md`, and `docs/internal/Design-v0.md`.
 
 ## Current Status
 
 - Core runtime is complete: providers, tools, agent runtime, middleware, orchestration, memory, observability, workflows, and streaming.
-- Top-level convenience API is available:
+- Agent-first composition API is the primary public coordination surface.
+- Top-level API:
+  - `Agora.agent/3` (define agent config)
   - `Agora.run/2` (one-shot run)
   - `Agora.stream/2` (one-shot streaming with cleanup)
+  - `Agora.sequential/3`, `parallel/3`, `round_robin/3`, `group_chat/3`, `supervisor/4`, `plan/4`, `handoff/3` (composition)
+  - `Agora.agent_tool/2` (agent-as-tool with depth guard)
+  - `Agora.run_workflow/2` (DAG workflow execution)
   - `Agora.start_agent/1,2` / `Agora.stop_agent/1`
-  - `Agora.run_workflow/1,2`
-- Phase 10 deliverables are present:
-  - `guides/*.md` (7 guides)
-  - `examples/*.exs` (5 runnable examples)
+- Release deliverables:
+  - `guides/*.md` (9 guides)
+  - `examples/*.exs` (22 runnable examples)
   - `CHANGELOG.md`
   - `.github/workflows/ci.yml`
   - Hex metadata + ExDoc grouping in `mix.exs`

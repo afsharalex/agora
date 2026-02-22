@@ -2,9 +2,13 @@ defmodule Agora.Workflow.Step do
   @moduledoc """
   A single step in a workflow DAG.
 
-  Each step has a handler (a 1-arity function or an `AgentConfig` struct) that
-  receives a map of upstream results and returns `{:ok, value}` or
-  `{:error, %Error{}}`.
+  Steps can use **agent handlers** or **function handlers**:
+
+  - **Agent handler** (`%AgentConfig{}`) — the executor starts a temporary agent,
+    runs it with the input derived from upstream results, and stops it. Use
+    `Agora.Workflow.AgentStep.spec/3` for ergonomic construction.
+  - **Function handler** (`(map() -> {:ok, term()} | {:error, Error.t()})`) —
+    a plain function receiving upstream results. Useful for non-LLM computation.
 
   ## Fields
 

@@ -1,17 +1,70 @@
 # Workflows
 
-> **Recommended entry point:** For the unified `run_mode/3` API covering workflow modes
-> (`:sequential`, `:conditional`, `:parallel`, `:dag`), see [Execution Modes](execution-modes.md).
-> This guide covers advanced topics: Builder API, Block/Module DSLs, checkpoint persistence,
-> agent-powered steps, and step options.
-
-## Overview
-
 Workflows define deterministic pipelines where execution order is predetermined. Unlike orchestrators (LLM-driven routing), workflows follow predefined step dependencies with parallel fan-out, conditional branching, retry, and checkpoint-based resumability.
 
-## Build a Linear Workflow
+## Agent-Based Workflows
 
-For the simpler `run_mode(:sequential, ...)` API, see [Execution Modes](execution-modes.md#sequential--linear-chain).
+The simplest way to use workflows is through the composition functions, which run agents as workflow steps.
+
+### Sequential Pipeline
+
+```elixir
+researcher = Agora.agent(:anthropic, "claude-sonnet-4-20250514",
+  name: "researcher", instructions: "You research topics."
+)
+writer = Agora.agent(:anthropic, "claude-sonnet-4-20250514",
+  name: "writer", instructions: "You write articles."
+)
+
+{:ok, results} = Agora.sequential("Write about BEAM", [
+  researcher: researcher,
+  writer: writer
+])
+```
+
+### Parallel Fan-Out
+
+```elixir
+{:ok, results} = Agora.parallel("Analyze this text", [
+  sentiment: sentiment_agent,
+  keywords: keywords_agent,
+  summary: summary_agent
+])
+```
+
+### AgentStep for DAG Workflows
+
+For complex topologies, use `Agora.Workflow.AgentStep` with the Builder API:
+
+```elixir
+alias Agora.Workflow.{AgentStep, Builder}
+
+research_spec = AgentStep.spec(:research, researcher,
+  input_mapper: fn _results -> "Research the BEAM virtual machine" end
+)
+
+writing_spec = AgentStep.spec(:writing, writer,
+  input_mapper: fn results ->
+    {:ok, msg} = results[:research]
+    "Write an article based on: #{msg.content}"
+  end
+)
+
+workflow =
+  Builder.new()
+  |> Builder.step(research_spec)
+  |> Builder.step(writing_spec)
+  |> Builder.sequence([:research, :writing])
+  |> Builder.build!()
+
+{:ok, results} = Agora.run_workflow(workflow)
+```
+
+## Function-Based Workflows
+
+Steps can also be plain functions for non-LLM logic:
+
+### Build a Linear Workflow
 
 ```elixir
 alias Agora.Workflow.Builder
@@ -33,7 +86,7 @@ workflow =
 {:ok, results} = Agora.run_workflow(workflow)
 ```
 
-## Parallel Fan-Out/Fan-In
+### Parallel Fan-Out/Fan-In
 
 Steps within the same topological level execute in parallel:
 
@@ -58,11 +111,7 @@ workflow =
   |> Builder.build!()
 ```
 
-`parallel/3` creates edges from `:source` to both `:analyze` and `:summarize`, and from both to `:combine`.
-
-## Conditional Branching
-
-Edges can have condition functions that control whether a step executes:
+### Conditional Branching
 
 ```elixir
 workflow =
@@ -80,8 +129,6 @@ workflow =
   end)
   |> Builder.build!()
 ```
-
-Steps with unsatisfied conditions are skipped (result is `:skipped`).
 
 ## Auto-Edges from Inputs
 
@@ -102,32 +149,15 @@ workflow =
 
 ## Builder Sugar
 
-The Builder provides several conveniences for common patterns.
-
 ### `after:` alias
 
-Use `after:` instead of `inputs:` for more readable dependency declarations:
-
 ```elixir
-workflow =
-  Builder.new()
-  |> Builder.step(:fetch, fn _r -> {:ok, fetch_data()} end)
-  |> Builder.step(:transform, fn r ->
-    {:ok, data} = r[:fetch]
-    {:ok, transform(data)}
-  end, after: :fetch)
-  |> Builder.step(:save, fn r ->
-    {:ok, data} = r[:transform]
-    {:ok, save(data)}
-  end, after: :transform)
-  |> Builder.build!()
+Builder.step(:transform, fn r -> ... end, after: :fetch)
 ```
 
 `after: :step_id` is equivalent to `inputs: [:step_id]`. Lists work too: `after: [:a, :b]`.
 
 ### `chain/2` for linear pipelines
-
-For simple linear pipelines, `chain/2` defines steps and wires them in one call:
 
 ```elixir
 workflow =
@@ -140,11 +170,7 @@ workflow =
   |> Builder.build!()
 ```
 
-Each element is `{id, handler}` or `{id, handler, opts}`. Wiring options (`:after`, `:inputs`, `:condition`, `:when`) are not allowed since `chain/2` manages the topology.
-
 ### `step_defaults` for workflow-wide defaults
-
-Set default `:timeout` and `:retry` for all steps:
 
 ```elixir
 workflow =
@@ -157,34 +183,21 @@ workflow =
   |> Builder.build!()
 ```
 
-Per-step options override defaults.
-
 ### Inline `condition:`/`when:`
 
-For single-dependency conditional edges, declare the condition inline on the step:
-
 ```elixir
-workflow =
-  Builder.new()
-  |> Builder.step(:check, &check_status/1)
-  |> Builder.step(:alert, &send_alert/1,
-    after: :check,
-    condition: fn r -> elem(r[:check], 1) == :critical end
-  )
-  |> Builder.build!()
+Builder.step(:alert, &send_alert/1,
+  after: :check,
+  condition: fn r -> elem(r[:check], 1) == :critical end
+)
 ```
-
-This is equivalent to calling `Builder.edge(:check, :alert, condition: ...)` separately. Use `edge/4` directly for multi-dependency conditional edges.
 
 ## Agent-Powered Steps
 
 Use `AgentConfig` as a step handler to run an LLM agent within the workflow:
 
 ```elixir
-agent_config = Agora.AgentConfig.new!(
-  provider: :anthropic,
-  model: "claude-sonnet-4-20250514"
-)
+agent_config = Agora.agent(:anthropic, "claude-sonnet-4-20250514")
 
 workflow =
   Builder.new()
@@ -197,8 +210,6 @@ workflow =
   |> Builder.sequence([:data, :agent])
   |> Builder.build!()
 ```
-
-The `input_mapper` function converts workflow results into the agent's input message. A temporary agent is started, runs, and is stopped automatically.
 
 ## Step Options
 
@@ -235,19 +246,11 @@ Resume workflows from where they left off:
 {:ok, results} = Agora.run_workflow(workflow,
   checkpoint_store: {Agora.Workflow.CheckpointStore.File, path: "/tmp/workflow.json"}
 )
-
-# With namespace for multiple workflow runs
-{:ok, results} = Agora.run_workflow(workflow,
-  checkpoint_store: {Agora.Workflow.CheckpointStore.File,
-    path: "/tmp/workflows.json", namespace: "run_42"}
-)
 ```
-
-When a checkpoint store is provided, completed steps are loaded from the store and skipped. New step results are saved as they complete.
 
 ## Block DSL
 
-For inline workflow definitions, the `Agora.Workflow.DSL` module provides a `workflow do ... end` macro that eliminates pipe-threading ceremony:
+For inline workflow definitions, the `Agora.Workflow.DSL` module provides a `workflow do ... end` macro:
 
 ```elixir
 import Agora.Workflow.DSL
@@ -262,97 +265,15 @@ w = workflow do
     {:ok, Enum.map(users, &normalize/1)}
   end
 
-  step :count, after: :fetch, run: &count/1
-
-  step :summary, run: fn r ->
-    {:ok, count} = r[:count]
-    {:ok, transformed} = r[:transform]
-    {:ok, %{count: count, data: transformed}}
-  end
-
-  [:count, :transform] ~> :summary
+  :fetch ~> :transform
 end
 
 {:ok, results} = Agora.run_workflow(w)
 ```
 
-### Step Forms
-
-Steps can use a `do` block (with an injected `results` binding) or a `run:` keyword:
-
-```elixir
-# do block — results binding available
-step :transform, after: :fetch do
-  {:ok, data} = results[:fetch]
-  {:ok, process(data)}
-end
-
-# run: keyword — function reference
-step :transform, after: :fetch, run: &process/1
-```
-
-### Workflow Options
-
-Options passed to `workflow` become `step_defaults`:
-
-```elixir
-w = workflow timeout: 30_000, retry: 2 do
-  step :a, run: &fetch/1
-  step :b, run: &transform/1
-end
-```
-
-### Edge Wiring with `~>`
-
-The `~>` operator provides visual DAG wiring:
-
-```elixir
-workflow do
-  step :a, run: &a/1
-  step :b, run: &b/1
-  step :c, run: &c/1
-  step :d, run: &d/1
-
-  :a ~> :b ~> :c           # chain
-  [:b, :c] ~> :d           # fan-in
-  :a ~> [:b, :c]           # fan-out
-end
-```
-
-### Explicit Edges and Conditions
-
-```elixir
-workflow do
-  step :check, run: &check/1
-  step :notify, run: &notify/1
-
-  edge :check, :notify, condition: fn r ->
-    r[:check] == {:ok, :critical}
-  end
-end
-```
-
-The `when:` alias works for edge conditions too: `edge :a, :b, when: fn r -> ... end`.
-
-### Topology Helpers
-
-```elixir
-workflow do
-  step :a, run: &a/1
-  step :b, run: &b/1
-  step :c, run: &c/1
-  step :d, run: &d/1
-
-  chain [:a, :b, :c]                    # linear edges (wire-only)
-  parallel [:b, :c], from: :a, to: :d   # fan-out/fan-in
-end
-```
-
-Note: the DSL `chain` maps to `Builder.sequence/2` (wire-only for pre-defined steps), not `Builder.chain/2` (which defines steps and wires them).
-
 ## Module DSL
 
-For reusable, documentable workflow modules, `use Agora.Workflow.Definition` provides a module-level DSL with compile-time validation:
+For reusable workflow modules with compile-time validation:
 
 ```elixir
 defmodule MyApp.Workflows.ETL do
@@ -375,60 +296,19 @@ end
 {:ok, results} = Agora.run_workflow(MyApp.Workflows.ETL)
 ```
 
-### Module-Level vs Inline DSL
-
-| Aspect | Module DSL (`Definition`) | Inline DSL (`DSL`) |
-|--------|--------------------------|-------------------|
-| Scope | Module-level, reusable | Block expression, inline |
-| Validation | Compile-time (cycles, endpoints) | Build-time via Builder |
-| Testing | Individual step functions testable | Handler closures only |
-| Reuse | Import module, call `__workflow__/0` | Assign to variable |
-| Use case | Production pipelines, shared workflows | Quick prototypes, scripts |
-
-### Step Testing
-
-Steps defined with `do` blocks generate public functions (with `@doc false`) that can be tested in isolation:
-
-```elixir
-# In your test file
-test "transform step processes data correctly" do
-  mock_results = %{fetch: {:ok, ["Alice", "Bob"]}}
-  assert {:ok, ["ALICE", "BOB"]} = MyApp.Workflows.ETL.__agora_step_transform__(mock_results)
-end
-```
-
-Steps defined with `run:` do not generate named functions and are tested through the workflow or by testing the function directly.
-
-### Compile-Time Validation
-
-The module DSL validates the workflow graph at compile time:
-
-- **Duplicate step IDs** — compile error
-- **Self-loop edges** — compile error
-- **Unconditional cycles** — compile error (can never execute)
-- **Conditional cycles** — compile warning (may break at runtime)
-- **Unknown edge endpoints** — compile error
-- **Unknown input references** — compile error
-
-### Generated Functions
-
-Each workflow module defines:
-
-- `__workflow__/0` — returns a `%Agora.Workflow{}` struct
-- `__workflow_steps__/0` — returns step IDs in definition order
-
 ## Builder API Reference
 
 | Function | Description |
 |----------|-------------|
 | `Builder.new/0,1` | Create a new builder (with optional `step_defaults`) |
-| `Builder.step/3,4` | Add a step with handler and options (`after:`, `condition:`, etc.) |
+| `Builder.step/2` | Add a pre-built step spec tuple (from `AgentStep.spec/3`) |
+| `Builder.step/3,4` | Add a step with handler and options |
 | `Builder.edge/3,4` | Add a dependency edge (with optional condition) |
 | `Builder.sequence/2` | Chain step IDs into linear edges |
 | `Builder.chain/2` | Define steps and wire them in a linear pipeline |
 | `Builder.parallel/3` | Fan-out from one step, fan-in to another |
-| `Builder.build/1,2` | Build workflow, return `{:ok, workflow} \| {:error, errors}`. Optional opts: `skip_cycle_check: true` |
-| `Builder.build!/1,2` | Build workflow or raise on validation error. Accepts same opts as `build/2` |
+| `Builder.build/1,2` | Build workflow, return `{:ok, workflow} \| {:error, errors}` |
+| `Builder.build!/1,2` | Build workflow or raise on validation error |
 
 ## Telemetry
 
@@ -436,3 +316,8 @@ Workflows emit telemetry events:
 
 - `[:agora, :workflow, :run, :start | :stop | :exception]` -- workflow-level
 - `[:agora, :workflow, :step, :start | :stop | :exception]` -- per-step
+
+## See Also
+
+- [Composition](composition.md) -- High-level agent coordination patterns
+- [Agents](agents.md) -- Agent definition and lifecycle

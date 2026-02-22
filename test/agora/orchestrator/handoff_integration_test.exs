@@ -292,10 +292,7 @@ defmodule Agora.Orchestrator.HandoffIntegrationTest do
   describe "nil content handoff" do
     test "agent hands off with nil content → target receives empty string" do
       a_fn = fn _messages, _config ->
-        {:ok,
-         Message.new(:assistant, nil,
-           metadata: %{handoff: %{target: "agent_b"}}
-         )}
+        {:ok, Message.new(:assistant, nil, metadata: %{handoff: %{target: "agent_b"}})}
       end
 
       b_fn = fn messages, _config ->

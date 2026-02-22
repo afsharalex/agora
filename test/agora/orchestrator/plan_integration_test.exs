@@ -23,10 +23,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         case n do
           1 ->
-            {:ok,
-             Message.assistant(
-               "PLAN\nSTEP:1:worker:Do the research\nEND_PLAN"
-             )}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Do the research\nEND_PLAN")}
 
           _ ->
             {:ok, Message.assistant("REVIEW:COMPLETE:Research complete")}
@@ -93,7 +90,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         # Writer should receive context from researcher
         last_user = Enum.find(messages, &(&1.role == :user))
-        content = last_user && last_user.content || ""
+        content = (last_user && last_user.content) || ""
 
         {:ok, Message.assistant("Draft based on: #{content}")}
       end
@@ -139,8 +136,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         case n do
           1 ->
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Do task\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Do task\nEND_PLAN")}
 
           2 ->
             {:ok, Message.assistant("REVIEW:RETRY:Try again")}
@@ -189,8 +185,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         case n do
           1 ->
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker_a:Do task\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker_a:Do task\nEND_PLAN")}
 
           2 ->
             {:ok, Message.assistant("REVIEW:REASSIGN:worker_b:Try other worker")}
@@ -236,8 +231,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
         case n do
           1 ->
             # First plan
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Bad approach\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Bad approach\nEND_PLAN")}
 
           2 ->
             # Review after step 1 → replan
@@ -245,8 +239,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
           3 ->
             # Second plan
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Better approach\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Better approach\nEND_PLAN")}
 
           _ ->
             {:ok, Message.assistant("REVIEW:COMPLETE:Done after replan")}
@@ -283,8 +276,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         case n do
           1 ->
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Do task\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Do task\nEND_PLAN")}
 
           _ ->
             {:ok, Message.assistant("REVIEW:RETRY:Try again")}
@@ -324,8 +316,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
         cond do
           rem(n, 2) == 1 ->
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Try again\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Try again\nEND_PLAN")}
 
           true ->
             {:ok, Message.assistant("REVIEW:REPLAN:Not working")}
@@ -381,8 +372,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
 
           4 ->
             # New plan with no deps
-            {:ok,
-             Message.assistant("PLAN\nSTEP:1:worker:Simple task\nEND_PLAN")}
+            {:ok, Message.assistant("PLAN\nSTEP:1:worker:Simple task\nEND_PLAN")}
 
           _ ->
             {:ok, Message.assistant("REVIEW:COMPLETE:Finally done")}
@@ -428,9 +418,7 @@ defmodule Agora.Orchestrator.PlanIntegrationTest do
         :counters.put(counter, 1, n)
 
         {:ok,
-         Message.assistant(
-           "PLAN\nSTEP:1:worker:Long task\nSTEP:2:worker:Another task\nEND_PLAN"
-         )}
+         Message.assistant("PLAN\nSTEP:1:worker:Long task\nSTEP:2:worker:Another task\nEND_PLAN")}
       end
 
       worker_fn = fn _messages, _config ->

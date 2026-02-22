@@ -10,6 +10,7 @@ Agora follows several core principles:
 - **Structured errors**: Every operation returns `{:ok, result} | {:error, %Agora.Error{}}`. Exceptions are never used for control flow.
 - **Provider-agnostic**: The `Agora.Provider` behaviour abstracts LLM interactions. Switching providers requires changing one config field.
 - **Composable**: Middleware, termination conditions, and orchestrators compose naturally without framework coupling.
+- **Agent-first**: Agents are the core building block. Composition functions coordinate agents; workflows and orchestrators are the underlying substrates.
 
 ## Supervision Tree
 
@@ -39,7 +40,7 @@ User → Agent.run/2 → reasoning loop:
   [after_provider_call middleware]
     ├─ tool_calls?
     │   [before_tool_call middleware]
-    │   ToolBroker.execute/2 → tool_results
+    │   ToolBroker.execute/4 → tool_results
     │   [after_tool_call middleware]
     │   → loop
     └─ text only? → return {:ok, Message.t()}
@@ -57,19 +58,33 @@ User → Agent.stream_run/2 → streaming loop:
     └─ text only? → emit :done, return Agora.Stream.t()
 ```
 
+### Composition
+
+```
+Agora.sequential/3  ──→ Workflow Engine (Patterns + Executor)
+Agora.parallel/3    ──→ Workflow Engine (Patterns + Executor)
+Agora.round_robin/3 ──→ Orchestrator (Runner + RoundRobin)
+Agora.group_chat/3  ──→ Orchestrator (Runner + ChatRoom)
+Agora.supervisor/4  ──→ Orchestrator (Runner + Supervisor)
+Agora.plan/4        ──→ Orchestrator (Runner + Plan)
+Agora.handoff/3     ──→ Orchestrator (Runner + Handoff)
+Agora.agent_tool/2  ──→ FunctionTool wrapping Agora.run/2
+```
+
 ## Module Organization
 
 ### Core
-- `Agora` -- Top-level convenience API (`run/2`, `stream/2`, `run_mode/3`, `run_workflow/1`)
-- `Agora.Execution` -- Unified mode-first execution facade for orchestrators and workflows
-- `Agora.ModeEvent` -- Typed event struct for streaming execution progress
-- `Agora.CancelToken` -- Lock-free boundary-cooperative cancellation
-- `Agora.ContextPolicy` -- Message compaction strategies for bounded context growth
+- `Agora` -- Top-level API (`agent/3`, `run/2`, `stream/2`, composition functions, `run_workflow/2`)
+- `Agora.Compose` -- Composition function implementations
+- `Agora.AgentTool` -- Agent-as-tool wrapping with depth guard
 - `Agora.Agent` -- Multi-backend agent facade (dispatches to Server or StateMachine)
 - `Agora.Agent.Lifecycle` -- State machine lifecycle configuration (states, transitions, callbacks)
-- `Agora.AgentConfig` -- NimbleOptions-validated configuration (`:lifecycle` field selects backend)
+- `Agora.Agent.Supervisor` -- DynamicSupervisor for agent lifecycle management
+- `Agora.AgentConfig` -- NimbleOptions-validated configuration
 - `Agora.Message` -- Universal message struct (role, content, tool_calls, tool_results, metadata)
 - `Agora.Error` -- 15 typed error categories
+- `Agora.CancelToken` -- Lock-free boundary-cooperative cancellation
+- `Agora.ContextPolicy` -- Message compaction strategies for bounded context growth
 
 ### Providers
 - `Agora.Provider` -- Behaviour + resolution (atom → module mapping)
@@ -102,6 +117,11 @@ User → Agent.stream_run/2 → streaming loop:
 ### Workflows
 - `Agora.Workflow.Builder` -- DSL for DAG construction
 - `Agora.Workflow.Executor` -- Stateless executor with parallel fan-out
+- `Agora.Workflow.AgentStep` -- Helper for creating agent-based step specs
+
+### Internals
+- `Agora.Execution` -- Internal execution facade for orchestrators and workflows
+- `Agora.ModeEvent` -- Typed event struct for streaming execution progress
 
 ### Observability
 - `Agora.Telemetry` -- 28 events across 11 prefixes
@@ -133,7 +153,7 @@ Provider options follow a two-tier lookup:
 
 ```elixir
 # Per-agent
-config = AgentConfig.new!(provider: :anthropic, model: "claude-sonnet-4-20250514",
+config = Agora.agent(:anthropic, "claude-sonnet-4-20250514",
   provider_opts: [api_key: "sk-ant-...", timeout: 30_000])
 
 # Application-level (config/runtime.exs)

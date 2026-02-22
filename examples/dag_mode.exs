@@ -1,18 +1,17 @@
-# DAG Mode Example
+# DAG Workflow Example
 #
-# Demonstrates complex DAG topology via Builder API with run_mode(:dag, ...).
-# For simpler topologies, use :sequential, :parallel, or :conditional modes.
-# For the Builder API without run_mode, see workflow.exs.
+# Demonstrates complex DAG topology via the Builder API.
+# For simpler topologies, use Patterns.sequential/2 or Patterns.parallel/2.
 #
 # Run with: mix run examples/dag_mode.exs
 
 alias Agora.Workflow.Builder
 
-IO.puts("=== DAG Mode (Complex Topology) ===\n")
+IO.puts("=== DAG Workflow (Complex Topology) ===\n")
 
 # Build a workflow with mixed parallel and sequential dependencies:
-#   fetch_users ──┬── count_users ────┐
-#                 └── format_names ───┼── summary
+#   fetch_users --+-- count_users ---+
+#                 +-- format_names --+-- summary
 workflow =
   Builder.new()
   |> Builder.step(:fetch_users, fn _results ->
@@ -37,8 +36,8 @@ workflow =
   end, after: [:count_users, :format_names])
   |> Builder.build!()
 
-{:ok, results} = Agora.run_mode(:dag, workflow)
+{:ok, results} = Agora.run_workflow(workflow)
 
 {:ok, summary} = results[:summary]
 IO.puts("\nResult: #{summary}")
-IO.puts("\n[DAG mode complete]")
+IO.puts("\n[DAG workflow complete]")

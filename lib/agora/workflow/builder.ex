@@ -94,6 +94,24 @@ defmodule Agora.Workflow.Builder do
   end
 
   @doc """
+  Adds a pre-built step spec tuple to the workflow.
+
+  Accepts the tuple form `{id, handler}` or `{id, handler, opts}` as produced
+  by `Agora.Workflow.AgentStep.spec/3`. This is a convenience for inserting
+  step specs that were built externally.
+
+  Existing `step/3` and `step/4` behavior is unchanged.
+  """
+  @spec step(t(), Agora.Workflow.Patterns.step_spec()) :: t()
+  def step(%__MODULE__{} = builder, {id, handler}) do
+    step(builder, id, handler)
+  end
+
+  def step(%__MODULE__{} = builder, {id, handler, opts}) do
+    step(builder, id, handler, opts)
+  end
+
+  @doc """
   Adds a step to the builder.
 
   ## Options

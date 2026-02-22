@@ -29,9 +29,7 @@ defmodule Agora.Orchestrator.HandoffTest do
   end
 
   defp handoff_msg(target, message, content \\ "routing") do
-    Message.new(:assistant, content,
-      metadata: %{handoff: %{target: target, message: message}}
-    )
+    Message.new(:assistant, content, metadata: %{handoff: %{target: target, message: message}})
   end
 
   # --- Tests ---
@@ -84,10 +82,12 @@ defmodule Agora.Orchestrator.HandoffTest do
 
     test "agents are sorted alphabetically" do
       {:ok, state} =
-        Handoff.init(init_config(%{
-          agent_names: [:zebra, :alpha, :middle],
-          initial_agent: :alpha
-        }))
+        Handoff.init(
+          init_config(%{
+            agent_names: [:zebra, :alpha, :middle],
+            initial_agent: :alpha
+          })
+        )
 
       assert state.agents == [:alpha, :middle, :zebra]
     end
@@ -269,9 +269,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
 
       msg =
-        Message.new(:assistant, "response content",
-          metadata: %{handoff: %{target: "agent_b"}}
-        )
+        Message.new(:assistant, "response content", metadata: %{handoff: %{target: "agent_b"}})
 
       {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
@@ -282,9 +280,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
 
       msg =
-        Message.new(:assistant, nil,
-          metadata: %{handoff: %{target: "agent_b"}}
-        )
+        Message.new(:assistant, nil, metadata: %{handoff: %{target: "agent_b"}})
 
       {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
 
@@ -322,9 +318,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
 
       msg =
-        Message.new(:assistant, "HANDOFF:agent_b:fallback",
-          metadata: %{handoff: "just a string"}
-        )
+        Message.new(:assistant, "HANDOFF:agent_b:fallback", metadata: %{handoff: "just a string"})
 
       {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
         Handoff.handle_result(state, :agent_a, {:ok, msg})
@@ -350,9 +344,7 @@ defmodule Agora.Orchestrator.HandoffTest do
       state = init!()
 
       msg =
-        Message.new(:assistant, "HANDOFF:agent_b:fallback",
-          metadata: %{handoff: %{target: 42}}
-        )
+        Message.new(:assistant, "HANDOFF:agent_b:fallback", metadata: %{handoff: %{target: 42}})
 
       {:error, %Error{type: :orchestration_error, message: err_msg}, _state} =
         Handoff.handle_result(state, :agent_a, {:ok, msg})
@@ -732,9 +724,7 @@ defmodule Agora.Orchestrator.HandoffTest do
 
       # nil message normalizes to ""
       msg =
-        Message.new(:assistant, nil,
-          metadata: %{handoff: %{target: "agent_b", message: nil}}
-        )
+        Message.new(:assistant, nil, metadata: %{handoff: %{target: "agent_b", message: nil}})
 
       {:continue, new_state, _events} = Handoff.handle_result(state, :agent_a, {:ok, msg})
       assert new_state.handoff_message == ""

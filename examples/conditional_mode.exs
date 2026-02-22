@@ -1,13 +1,14 @@
-# Conditional Mode Example
+# Conditional Workflow Example
 #
-# Demonstrates input-dependent routing using run_mode(:conditional, ...).
+# Demonstrates input-dependent routing using the Workflow Patterns API.
 # A router step classifies input, then condition functions determine which branch runs.
 #
 # Run with: mix run examples/conditional_mode.exs
 
-IO.puts("=== Conditional Mode (Input Router) ===\n")
+alias Agora.Workflow.Patterns
 
-# The router classifies the input
+IO.puts("=== Conditional Workflow (Input Router) ===\n")
+
 router = {:classify, fn _results ->
   input = "urgent: server down"
   IO.puts("  [classify] Classifying: #{inspect(input)}")
@@ -19,7 +20,6 @@ router = {:classify, fn _results ->
   end
 end}
 
-# Branches run based on router result
 branches = [
   {fn r -> r[:classify] == {:ok, :urgent} end,
    {:handle_urgent, fn _r ->
@@ -34,8 +34,7 @@ branches = [
    end}}
 ]
 
-# Optional merge step collects whichever branch ran
-{:ok, results} = Agora.run_mode(:conditional, {router, branches},
+{:ok, workflow} = Patterns.conditional(router, branches,
   merge: {:report, fn results ->
     handled =
       cond do
@@ -49,6 +48,8 @@ branches = [
   end}
 )
 
+{:ok, results} = Agora.run_workflow(workflow)
+
 {:ok, report} = results[:report]
 IO.puts("\nFinal: #{report}")
-IO.puts("\n[Conditional mode complete]")
+IO.puts("\n[Conditional workflow complete]")

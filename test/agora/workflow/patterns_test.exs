@@ -80,8 +80,10 @@ defmodule Agora.Workflow.PatternsTest do
     test "with :from and :to — fan-out/fan-in" do
       {:ok, workflow} =
         Patterns.parallel(
-          [{:b, fn r -> {:ok, elem(r[:a], 1) + 1} end},
-           {:c, fn r -> {:ok, elem(r[:a], 1) + 2} end}],
+          [
+            {:b, fn r -> {:ok, elem(r[:a], 1) + 1} end},
+            {:c, fn r -> {:ok, elem(r[:a], 1) + 2} end}
+          ],
           from: {:a, fn _r -> {:ok, 10} end},
           to: {:d, fn r -> {:ok, elem(r[:b], 1) + elem(r[:c], 1)} end}
         )
@@ -183,11 +185,13 @@ defmodule Agora.Workflow.PatternsTest do
             {fn r -> r[:router] == {:ok, :go_a} end, {:branch_a, fn _r -> {:ok, "A"} end}},
             {fn r -> r[:router] == {:ok, :go_b} end, {:branch_b, fn _r -> {:ok, "B"} end}}
           ],
-          merge: {:final, fn r ->
-            a = r[:branch_a]
-            b = r[:branch_b]
-            {:ok, "a=#{inspect(a)}, b=#{inspect(b)}"}
-          end}
+          merge:
+            {:final,
+             fn r ->
+               a = r[:branch_a]
+               b = r[:branch_b]
+               {:ok, "a=#{inspect(a)}, b=#{inspect(b)}"}
+             end}
         )
 
       assert {:ok, results} = Executor.run(workflow)
@@ -283,11 +287,12 @@ defmodule Agora.Workflow.PatternsTest do
       {:ok, workflow} =
         Patterns.sequential([
           {:outer_a, fn _r -> {:ok, "start"} end},
-          {:outer_b, fn _r ->
-            {:ok, inner} = Patterns.sequential(inner_steps)
-            {:ok, inner_results} = Agora.run_workflow(inner)
-            {:ok, elem(inner_results[:inner_b], 1)}
-          end}
+          {:outer_b,
+           fn _r ->
+             {:ok, inner} = Patterns.sequential(inner_steps)
+             {:ok, inner_results} = Agora.run_workflow(inner)
+             {:ok, elem(inner_results[:inner_b], 1)}
+           end}
         ])
 
       assert {:ok, results} = Executor.run(workflow)

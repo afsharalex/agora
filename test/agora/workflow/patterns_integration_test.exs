@@ -8,15 +8,16 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
       token = CancelToken.new()
 
       steps = [
-        {:step1, fn _r ->
-          CancelToken.cancel(token)
-          {:ok, "done"}
-        end},
+        {:step1,
+         fn _r ->
+           CancelToken.cancel(token)
+           {:ok, "done"}
+         end},
         {:step2, fn _r -> {:ok, "should not run"} end}
       ]
 
       assert {:error, %Error{type: :cancelled}} =
-               Agora.run_mode(:sequential, steps, cancel_token: token)
+               Agora.Execution.run_workflow(:sequential, steps, cancel_token: token)
     end
   end
 
@@ -44,7 +45,7 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
         [{fn _r -> true end, {:agent_step, config, input_mapper: fn _r -> "Hello" end}}]
       }
 
-      {:ok, results} = Agora.run_mode(:conditional, input, context_policy: policy)
+      {:ok, results} = Agora.Execution.run_workflow(:conditional, input, context_policy: policy)
       assert {:ok, %Message{}} = results[:agent_step]
 
       # Agent was called with the context policy middleware injected
@@ -80,13 +81,12 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
       ]
 
       {:ok, _results} =
-        Agora.run_mode(:parallel, branches,
+        Agora.Execution.run_workflow(:parallel, branches,
           from: {:src, fn _r -> {:ok, 0} end},
           telemetry_metadata: %{trace_id: trace_id}
         )
 
-      assert_receive {:telemetry, ^ref, [:agora, :workflow, :run, :start],
-                      %{trace_id: ^trace_id}}
+      assert_receive {:telemetry, ^ref, [:agora, :workflow, :run, :start], %{trace_id: ^trace_id}}
 
       assert_receive {:telemetry, ^ref, [:agora, :workflow, :step, :start],
                       %{trace_id: ^trace_id}}
@@ -103,17 +103,23 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
         {:router, fn _r -> {:ok, :go} end},
         [
           {fn _r -> true end,
-           {:branch, fn _r ->
-             {:ok, inner} = Agora.Workflow.Patterns.sequential(inner_steps)
-             {:ok, inner_results} = Agora.run_workflow(inner)
-             {:ok, elem(inner_results[:inner_a], 1)}
-           end}}
-        ],
+           {:branch,
+            fn _r ->
+              {:ok, inner} = Agora.Workflow.Patterns.sequential(inner_steps)
+              {:ok, inner_results} = Agora.run_workflow(inner)
+              {:ok, elem(inner_results[:inner_a], 1)}
+            end}}
+        ]
       }
 
-      {:ok, results} = Agora.run_mode(:conditional, input, merge: {:final, fn r ->
-        {:ok, "merged: #{elem(r[:branch], 1)}"}
-      end})
+      {:ok, results} =
+        Agora.Execution.run_workflow(:conditional, input,
+          merge:
+            {:final,
+             fn r ->
+               {:ok, "merged: #{elem(r[:branch], 1)}"}
+             end}
+        )
 
       assert results[:branch] == {:ok, "inner_result"}
       assert {:ok, "merged: inner_result"} = results[:final]
@@ -146,7 +152,7 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
       ]
 
       {:ok, results} =
-        Agora.run_mode(:sequential, steps,
+        Agora.Execution.run_workflow(:sequential, steps,
           cancel_token: token,
           context_policy: policy,
           telemetry_metadata: %{trace_id: trace_id}
@@ -162,16 +168,17 @@ defmodule Agora.Workflow.PatternsIntegrationTest do
       token = CancelToken.new()
 
       steps = [
-        {:a, fn _r ->
-          CancelToken.cancel(token)
-          {:ok, "a done"}
-        end},
+        {:a,
+         fn _r ->
+           CancelToken.cancel(token)
+           {:ok, "a done"}
+         end},
         {:b, fn _r -> {:ok, "should not run"} end},
         {:c, fn _r -> {:ok, "should not run"} end}
       ]
 
       assert {:error, %Error{type: :cancelled}} =
-               Agora.run_mode(:sequential, steps,
+               Agora.Execution.run_workflow(:sequential, steps,
                  cancel_token: token,
                  on_failure: :skip
                )

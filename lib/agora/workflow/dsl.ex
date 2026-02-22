@@ -312,8 +312,12 @@ defmodule Agora.Workflow.DSL do
 
   defp validate_optional_opt(opts, meta, caller) do
     case Keyword.fetch(opts, :optional) do
-      :error -> opts
-      {:ok, val} when is_boolean(val) -> opts
+      :error ->
+        opts
+
+      {:ok, val} when is_boolean(val) ->
+        opts
+
       {:ok, other} ->
         raise CompileError,
           line: Keyword.get(meta, :line, 0),

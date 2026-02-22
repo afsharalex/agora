@@ -67,13 +67,14 @@ defmodule Agora.MixProject do
         {"CHANGELOG.md", title: "Changelog"},
         {"docs/internal/Design-v0.md", title: "Design Document"},
         {"guides/getting-started.md", title: "Getting Started"},
+        {"guides/agents.md", title: "Agents"},
+        {"guides/composition.md", title: "Composition"},
         {"guides/architecture.md", title: "Architecture"},
         {"guides/providers.md", title: "Providers"},
         {"guides/tools.md", title: "Tools"},
         {"guides/middleware.md", title: "Middleware"},
         {"guides/orchestration.md", title: "Orchestration"},
-        {"guides/workflows.md", title: "Workflows"},
-        {"guides/execution-modes.md", title: "Execution Modes"}
+        {"guides/workflows.md", title: "Workflows"}
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/
@@ -81,6 +82,8 @@ defmodule Agora.MixProject do
       groups_for_modules: [
         Core: [
           Agora,
+          Agora.Compose,
+          Agora.AgentTool,
           Agora.Agent,
           Agora.Agent.Lifecycle,
           Agora.Agent.Lifecycle.StateConfig,
@@ -89,8 +92,6 @@ defmodule Agora.MixProject do
           Agora.Message,
           Agora.Error,
           Agora.Config,
-          Agora.Execution,
-          Agora.ModeEvent,
           Agora.CancelToken,
           Agora.ContextPolicy
         ],
@@ -144,6 +145,7 @@ defmodule Agora.MixProject do
         Workflows: [
           Agora.Workflow,
           Agora.Workflow.Builder,
+          Agora.Workflow.AgentStep,
           Agora.Workflow.Definition,
           Agora.Workflow.DSL,
           Agora.Workflow.Executor,
@@ -156,6 +158,10 @@ defmodule Agora.MixProject do
           Agora.Telemetry,
           Agora.Telemetry.EventBusBridge,
           Agora.EventBus
+        ],
+        Internals: [
+          Agora.Execution,
+          Agora.ModeEvent
         ]
       ]
     ]

@@ -152,7 +152,11 @@ defmodule Agora.Orchestrator.Plan do
       {:ok, steps} ->
         case validate_plan(steps, state) do
           :ok ->
-            plan = Enum.map(steps, fn step -> Map.merge(step, %{status: :pending, retry_count: 0, output: nil}) end)
+            plan =
+              Enum.map(steps, fn step ->
+                Map.merge(step, %{status: :pending, retry_count: 0, output: nil})
+              end)
+
             {:continue, %{state | phase: :executing, plan: plan}}
 
           {:error, _} = err ->
@@ -226,8 +230,7 @@ defmodule Agora.Orchestrator.Plan do
         {:ok, planner}
 
       {:ok, _} ->
-        {:error,
-         Error.new(:orchestration_error, ":planner_agent must be an atom")}
+        {:error, Error.new(:orchestration_error, ":planner_agent must be an atom")}
 
       :error ->
         {:error,
@@ -322,8 +325,7 @@ defmodule Agora.Orchestrator.Plan do
          Error.new(:orchestration_error, "Could not find PLAN/END_PLAN markers in response")}
 
       plan_end <= plan_start ->
-        {:error,
-         Error.new(:orchestration_error, "END_PLAN appears before PLAN marker")}
+        {:error, Error.new(:orchestration_error, "END_PLAN appears before PLAN marker")}
 
       true ->
         first = plan_start + 1
@@ -365,8 +367,7 @@ defmodule Agora.Orchestrator.Plan do
              {:ok, agent} <- lookup_agent(String.trim(agent_str), agent_lookup),
              {:ok, description, deps} <- extract_deps(rest) do
           if String.trim(description) == "" do
-            {:error,
-             Error.new(:orchestration_error, "Step #{id} has empty description")}
+            {:error, Error.new(:orchestration_error, "Step #{id} has empty description")}
           else
             {:ok,
              %{
@@ -393,8 +394,7 @@ defmodule Agora.Orchestrator.Plan do
         {:ok, id}
 
       _ ->
-        {:error,
-         Error.new(:orchestration_error, "Invalid step ID: #{inspect(id_str)}")}
+        {:error, Error.new(:orchestration_error, "Invalid step ID: #{inspect(id_str)}")}
     end
   end
 
@@ -554,8 +554,7 @@ defmodule Agora.Orchestrator.Plan do
     if processed == length(steps) do
       :ok
     else
-      {:error,
-       Error.new(:orchestration_error, "Plan contains a dependency cycle")}
+      {:error, Error.new(:orchestration_error, "Plan contains a dependency cycle")}
     end
   end
 
@@ -628,8 +627,7 @@ defmodule Agora.Orchestrator.Plan do
         {:ok, decision}
 
       nil ->
-        {:error,
-         Error.new(:orchestration_error, "Could not parse review decision from response")}
+        {:error, Error.new(:orchestration_error, "Could not parse review decision from response")}
     end
   end
 
@@ -988,19 +986,31 @@ defmodule Agora.Orchestrator.Plan do
 
       not (is_integer(step[:id]) and step[:id] > 0) ->
         {:error,
-         Error.new(:orchestration_error, "Custom parse_plan step has invalid :id: #{inspect(step[:id])}")}
+         Error.new(
+           :orchestration_error,
+           "Custom parse_plan step has invalid :id: #{inspect(step[:id])}"
+         )}
 
       not is_binary(step[:description]) ->
         {:error,
-         Error.new(:orchestration_error, "Custom parse_plan step has invalid :description: #{inspect(step[:description])}")}
+         Error.new(
+           :orchestration_error,
+           "Custom parse_plan step has invalid :description: #{inspect(step[:description])}"
+         )}
 
       not is_atom(step[:assignee]) ->
         {:error,
-         Error.new(:orchestration_error, "Custom parse_plan step has invalid :assignee: #{inspect(step[:assignee])}")}
+         Error.new(
+           :orchestration_error,
+           "Custom parse_plan step has invalid :assignee: #{inspect(step[:assignee])}"
+         )}
 
       not is_list(step[:deps]) ->
         {:error,
-         Error.new(:orchestration_error, "Custom parse_plan step has invalid :deps: #{inspect(step[:deps])}")}
+         Error.new(
+           :orchestration_error,
+           "Custom parse_plan step has invalid :deps: #{inspect(step[:deps])}"
+         )}
 
       true ->
         validate_step_shapes(rest)
@@ -1014,7 +1024,10 @@ defmodule Agora.Orchestrator.Plan do
 
   defp validate_review_shape(other) do
     {:error,
-     Error.new(:orchestration_error, "Custom parse_review returned invalid decision shape: #{inspect(other)}")}
+     Error.new(
+       :orchestration_error,
+       "Custom parse_review returned invalid decision shape: #{inspect(other)}"
+     )}
   end
 
   defp format_crash(:error, %{__exception__: true} = exception),

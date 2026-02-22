@@ -46,7 +46,8 @@ defmodule Agora.Workflow.Patterns do
   alias Agora.{Error, Workflow}
   alias Agora.Workflow.Builder
 
-  @type step_spec :: {atom(), Workflow.Step.handler()} | {atom(), Workflow.Step.handler(), keyword()}
+  @type step_spec ::
+          {atom(), Workflow.Step.handler()} | {atom(), Workflow.Step.handler(), keyword()}
   @type branch_spec :: {(map() -> boolean()), step_spec()}
 
   @doc """
@@ -76,7 +77,10 @@ defmodule Agora.Workflow.Patterns do
   end
 
   def sequential(other, _opts) do
-    Error.wrap(:workflow_error, "sequential/2 expects a list of step specs, got: #{inspect(other)}")
+    Error.wrap(
+      :workflow_error,
+      "sequential/2 expects a list of step specs, got: #{inspect(other)}"
+    )
   end
 
   @doc """

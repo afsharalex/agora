@@ -366,7 +366,11 @@ defmodule Agora.Execution do
     ModeEvent.workflow_step_started(mode, step_id, metadata)
   end
 
-  defp build_workflow_mode_event(mode, %{type: :step_completed, step_id: step_id, result: result}, metadata) do
+  defp build_workflow_mode_event(
+         mode,
+         %{type: :step_completed, step_id: step_id, result: result},
+         metadata
+       ) do
     ModeEvent.workflow_step_completed(mode, step_id, result, metadata)
   end
 

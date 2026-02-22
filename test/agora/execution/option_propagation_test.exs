@@ -5,7 +5,7 @@ defmodule Agora.Execution.OptionPropagationTest do
   alias Agora.Orchestrator.TerminationCondition
 
   describe "cancel_token propagation" do
-    test "token passed to run_mode, cancelled mid-run, returns :cancelled" do
+    test "token passed to Execution.run, cancelled mid-run, returns :cancelled" do
       token = CancelToken.new()
       counter = :counters.new(1, [:atomics])
 
@@ -29,7 +29,7 @@ defmodule Agora.Execution.OptionPropagationTest do
         )
 
       result =
-        Agora.run_mode(:round_robin, "hello",
+        Agora.Execution.run(:round_robin, "hello",
           agents: %{a: config, b: config},
           cancel_token: token,
           max_turns: 100
@@ -40,12 +40,12 @@ defmodule Agora.Execution.OptionPropagationTest do
   end
 
   describe "context_policy propagation" do
-    test "context_policy option accepted by run_mode" do
+    test "context_policy option accepted by Execution.run" do
       config = AgentConfig.new!(provider: :echo, model: "echo")
       policy = ContextPolicy.new!(strategy: :sliding_window, window_size: 2)
 
       {:ok, %Message{}} =
-        Agora.run_mode(:single, "hello",
+        Agora.Execution.run(:single, "hello",
           agents: %{agent: config},
           context_policy: policy
         )
@@ -83,7 +83,7 @@ defmodule Agora.Execution.OptionPropagationTest do
         Agora.Orchestrator.TerminationCondition.max_turns(3)
 
       {:ok, _} =
-        Agora.run_mode(:round_robin, "hello",
+        Agora.Execution.run(:round_robin, "hello",
           agents: %{a: config, b: config},
           context_policy: policy,
           termination: termination
@@ -118,7 +118,7 @@ defmodule Agora.Execution.OptionPropagationTest do
       config = AgentConfig.new!(provider: :echo, model: "echo")
 
       {:ok, _} =
-        Agora.run_mode(:single, "hello",
+        Agora.Execution.run(:single, "hello",
           agents: %{agent: config},
           telemetry_metadata: %{request_id: request_id}
         )
@@ -149,7 +149,7 @@ defmodule Agora.Execution.OptionPropagationTest do
       config = AgentConfig.new!(provider: :echo, model: "echo")
 
       {:ok, _} =
-        Agora.run_mode(:single, "hello",
+        Agora.Execution.run(:single, "hello",
           agents: %{agent: config},
           telemetry_metadata: %{trace_id: trace_id}
         )
@@ -174,7 +174,7 @@ defmodule Agora.Execution.OptionPropagationTest do
         |> Builder.build()
 
       {:ok, results} =
-        Agora.run_mode(:dag, workflow,
+        Agora.Execution.run_workflow(:dag, workflow,
           input: "data",
           cancel_token: CancelToken.new()
         )
@@ -189,7 +189,7 @@ defmodule Agora.Execution.OptionPropagationTest do
       steps = [{:a, fn _r -> {:ok, "should not run"} end}]
 
       assert {:error, %Error{type: :cancelled}} =
-               Agora.run_mode(:sequential, steps, cancel_token: token)
+               Agora.Execution.run_workflow(:sequential, steps, cancel_token: token)
     end
 
     test ":parallel mode passes telemetry_metadata through" do
@@ -213,7 +213,7 @@ defmodule Agora.Execution.OptionPropagationTest do
       branches = [{:a, fn _r -> {:ok, 1} end}]
 
       {:ok, _} =
-        Agora.run_mode(:parallel, branches,
+        Agora.Execution.run_workflow(:parallel, branches,
           telemetry_metadata: %{trace_id: trace_id}
         )
 
@@ -243,7 +243,7 @@ defmodule Agora.Execution.OptionPropagationTest do
         [{fn _r -> true end, {:agent_step, config, input_mapper: fn _r -> "Hello" end}}]
       }
 
-      {:ok, _} = Agora.run_mode(:conditional, input, context_policy: policy)
+      {:ok, _} = Agora.Execution.run_workflow(:conditional, input, context_policy: policy)
 
       assert_receive :agent_called
     end
@@ -255,7 +255,7 @@ defmodule Agora.Execution.OptionPropagationTest do
       token = CancelToken.new()
 
       {:ok, %Message{}} =
-        Agora.run_mode(:round_robin, "hello",
+        Agora.Execution.run(:round_robin, "hello",
           agents: %{a: config, b: config},
           cancel_token: token,
           telemetry_metadata: %{session: "test"},

@@ -351,22 +351,30 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Execute step 1 successfully
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done 1")})
 
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:next")})
 
       # Execute step 2 → fails
       {:next, :writer, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :writer, {:error, Error.new(:provider_error, "fail")})
 
       # Review step 2 failure: CONTINUE
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
-        Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:keep going")})
+        Plan.handle_result(
+          state,
+          :planner,
+          {:ok, Message.assistant("REVIEW:CONTINUE:keep going")}
+        )
 
       # Now step 3 is blocked by failed step 2; current_step should be set to 2 (the blocker)
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
@@ -383,6 +391,7 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Execute step 1 → fails
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:error, Error.new(:provider_error, "fail")})
 
@@ -465,10 +474,11 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "Research the topic"},
-        %{id: 2, agent: "writer", desc: "Write the draft", deps: [1]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "Research the topic"},
+          %{id: 2, agent: "writer", desc: "Write the draft", deps: [1]}
+        ])
 
       msg = Message.assistant(content)
       {:continue, state} = Plan.handle_result(state, :planner, {:ok, msg})
@@ -496,11 +506,12 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config(%{max_plan_steps: 2}))
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "Step 1"},
-        %{id: 2, agent: "writer", desc: "Step 2"},
-        %{id: 3, agent: "researcher", desc: "Step 3"}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "Step 1"},
+          %{id: 2, agent: "writer", desc: "Step 2"},
+          %{id: 3, agent: "researcher", desc: "Step 3"}
+        ])
 
       msg = Message.assistant(content)
 
@@ -514,9 +525,10 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "nonexistent", desc: "Do something"}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "nonexistent", desc: "Do something"}
+        ])
 
       msg = Message.assistant(content)
 
@@ -531,10 +543,11 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "First"},
-        %{id: 1, agent: "writer", desc: "Second"}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "First"},
+          %{id: 1, agent: "writer", desc: "Second"}
+        ])
 
       msg = Message.assistant(content)
 
@@ -548,9 +561,10 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "Research", deps: [99]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "Research", deps: [99]}
+        ])
 
       msg = Message.assistant(content)
 
@@ -564,9 +578,10 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "Research", deps: [1]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "Research", deps: [1]}
+        ])
 
       msg = Message.assistant(content)
 
@@ -580,10 +595,11 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "A", deps: [2]},
-        %{id: 2, agent: "writer", desc: "B", deps: [1]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "A", deps: [2]},
+          %{id: 2, agent: "writer", desc: "B", deps: [1]}
+        ])
 
       msg = Message.assistant(content)
 
@@ -707,6 +723,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -841,6 +858,7 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Execute + review
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("findings")})
 
@@ -858,6 +876,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("findings")})
 
@@ -876,6 +895,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -894,6 +914,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:error, Error.new(:provider_error, "fail")})
 
@@ -915,6 +936,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:error, Error.new(:provider_error, "fail")})
 
@@ -934,6 +956,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:error, Error.new(:provider_error, "fail")})
 
@@ -956,6 +979,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -975,6 +999,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("bad result")})
 
@@ -994,6 +1019,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1021,6 +1047,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1040,6 +1067,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1062,6 +1090,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1094,6 +1123,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1137,11 +1167,12 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "A", deps: [3]},
-        %{id: 2, agent: "writer", desc: "B", deps: [1]},
-        %{id: 3, agent: "researcher", desc: "C", deps: [2]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "A", deps: [3]},
+          %{id: 2, agent: "writer", desc: "B", deps: [1]},
+          %{id: 3, agent: "researcher", desc: "C", deps: [2]}
+        ])
 
       msg = Message.assistant(content)
 
@@ -1155,11 +1186,12 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = plan_response([
-        %{id: 1, agent: "researcher", desc: "Valid standalone"},
-        %{id: 2, agent: "writer", desc: "Cycle A", deps: [3]},
-        %{id: 3, agent: "researcher", desc: "Cycle B", deps: [2]}
-      ])
+      content =
+        plan_response([
+          %{id: 1, agent: "researcher", desc: "Valid standalone"},
+          %{id: 2, agent: "writer", desc: "Cycle A", deps: [3]},
+          %{id: 3, agent: "researcher", desc: "Cycle B", deps: [2]}
+        ])
 
       msg = Message.assistant(content)
 
@@ -1182,6 +1214,7 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Complete step 1
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("research output")})
 
@@ -1216,19 +1249,23 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Complete step 1
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("output A")})
 
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:next")})
 
       # Complete step 2
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("output B")})
 
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:next")})
 
@@ -1266,6 +1303,7 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
@@ -1306,13 +1344,19 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Step 1 fails
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:error, Error.new(:provider_error, "fail")})
 
       # Review: CONTINUE (without fixing)
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
-        Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:CONTINUE:keep going")})
+        Plan.handle_result(
+          state,
+          :planner,
+          {:ok, Message.assistant("REVIEW:CONTINUE:keep going")}
+        )
 
       # Executing: blocked → routes to planner with blocked context
       assert state.phase == :executing
@@ -1323,7 +1367,11 @@ defmodule Agora.Orchestrator.PlanTest do
 
       # Planner decides to REPLAN
       {:continue, state, _events} =
-        Plan.handle_result(state, :planner, {:ok, Message.assistant("REVIEW:REPLAN:new approach")})
+        Plan.handle_result(
+          state,
+          :planner,
+          {:ok, Message.assistant("REVIEW:REPLAN:new approach")}
+        )
 
       assert state.phase == :planning
       assert state.replan_count == 1
@@ -1350,7 +1398,9 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = "PLAN\nSTEP:1:researcher:First step\nSTEP:2:writer:Write about: topics:DEP:1\nEND_PLAN"
+      content =
+        "PLAN\nSTEP:1:researcher:First step\nSTEP:2:writer:Write about: topics:DEP:1\nEND_PLAN"
+
       msg = Message.assistant(content)
       {:continue, state} = Plan.handle_result(state, :planner, {:ok, msg})
 
@@ -1363,7 +1413,9 @@ defmodule Agora.Orchestrator.PlanTest do
       {:ok, state} = Plan.init(init_config())
       {:next, :planner, _prompt, state} = Plan.next(state, make_context())
 
-      content = "Here's my plan:\n\n  PLAN  \n\n  STEP:1:researcher:Do research  \n\n  END_PLAN  \n\nLet me know!"
+      content =
+        "Here's my plan:\n\n  PLAN  \n\n  STEP:1:researcher:Do research  \n\n  END_PLAN  \n\nLet me know!"
+
       msg = Message.assistant(content)
       {:continue, state} = Plan.handle_result(state, :planner, {:ok, msg})
 
@@ -1378,13 +1430,18 @@ defmodule Agora.Orchestrator.PlanTest do
         ])
 
       {:next, :researcher, _msg, state} = Plan.next(state, make_context())
+
       {:continue, state} =
         Plan.handle_result(state, :researcher, {:ok, Message.assistant("done")})
 
       {:next, :planner, _msg, state} = Plan.next(state, make_context())
 
       # Review directive is on its own line but surrounded by prose
-      review_msg = Message.assistant("I've reviewed the output.\nREVIEW:COMPLETE:Looks great\nThat's my assessment.")
+      review_msg =
+        Message.assistant(
+          "I've reviewed the output.\nREVIEW:COMPLETE:Looks great\nThat's my assessment."
+        )
+
       {:done, msg, _state} = Plan.handle_result(state, :planner, {:ok, review_msg})
       assert msg.content == "Looks great"
     end

@@ -2,11 +2,95 @@ defmodule Agora do
   @moduledoc """
   Agora is a multi-agent runtime framework for Elixir.
 
-  It enables users to create collaborative AI agents using the BEAM actor model,
-  with provider abstraction, tool execution, middleware, and orchestration patterns.
+  ## Quick Start
+
+      # Define agents
+      researcher = Agora.agent(:echo, "echo",
+        name: "researcher", instructions: "You are a research analyst."
+      )
+      writer = Agora.agent(:echo, "echo",
+        name: "writer", instructions: "You are a technical writer."
+      )
+
+      # Compose agents
+      {:ok, results} = Agora.sequential("Write about BEAM", [researcher: researcher, writer: writer])
+
+  ## Coordination Patterns
+
+  | Function | Pattern | Use When |
+  |----------|---------|----------|
+  | `sequential/3` | A → B → C | Pipeline processing |
+  | `parallel/3` | A \\| B \\| C | Independent subtasks |
+  | `round_robin/3` | A → B → A → B | Iterative refinement |
+  | `group_chat/3` | Shared transcript | Collaborative discussion |
+  | `supervisor/4` | Delegation | Manager + workers |
+  | `plan/4` | Planned execution | Complex multi-step tasks |
+  | `handoff/3` | Baton passing | Decentralized routing |
+  | `agent_tool/2` | Agent-as-tool | Hierarchical nesting |
+
+  ## Single Agent
+
+      config = Agora.AgentConfig.new!(provider: :echo, model: "echo")
+      {:ok, response} = Agora.run(config, "Hello")
+
+  ## Advanced
+
+  For deterministic DAG workflows with checkpoints and retries, see `Agora.run_workflow/2`
+  and `Agora.Workflow.Builder`.
+
+  For custom orchestration logic, implement the `Agora.Orchestrator` behaviour and use
+  `Agora.start_runner/2` directly.
   """
 
-  alias Agora.{AgentConfig, Error, Execution, Message}
+  alias Agora.{AgentConfig, Error, Message}
+
+  @doc """
+  Defines an agent configuration.
+
+  This is a convenience wrapper around `AgentConfig.new!/1` that takes the
+  provider and model as positional arguments.
+
+  ## Examples
+
+      researcher = Agora.agent(:anthropic, "claude-sonnet-4-20250514",
+        name: "researcher",
+        instructions: "You are a research analyst.",
+        tools: [MyApp.SearchTool]
+      )
+
+  """
+  @spec agent(atom(), String.t(), keyword()) :: AgentConfig.t()
+  def agent(provider, model, opts \\ []) when is_atom(provider) and is_binary(model) do
+    AgentConfig.new!(Keyword.merge(opts, provider: provider, model: model))
+  end
+
+  @doc """
+  Creates a tool that delegates to another agent.
+
+  See `Agora.AgentTool.new/2` for options and details.
+
+  ## Examples
+
+      research_tool = Agora.agent_tool(researcher,
+        name: "research_agent",
+        description: "Delegates research tasks to a specialized agent."
+      )
+
+  """
+  @spec agent_tool(AgentConfig.t(), keyword()) :: Agora.Tool.FunctionTool.t()
+  def agent_tool(%AgentConfig{} = config, opts \\ []) do
+    Agora.AgentTool.new(config, opts)
+  end
+
+  # --- Composition API (delegates to Agora.Compose) ---
+
+  defdelegate sequential(input, agents, opts \\ []), to: Agora.Compose
+  defdelegate parallel(input, agents, opts \\ []), to: Agora.Compose
+  defdelegate round_robin(input, agents, opts \\ []), to: Agora.Compose
+  defdelegate group_chat(input, agents, opts \\ []), to: Agora.Compose
+  defdelegate supervisor(input, leader, workers, opts \\ []), to: Agora.Compose
+  defdelegate plan(input, planner, workers, opts \\ []), to: Agora.Compose
+  defdelegate handoff(input, agents, opts \\ []), to: Agora.Compose
 
   @doc """
   Returns the current version of Agora.
@@ -36,6 +120,10 @@ defmodule Agora do
 
   @doc """
   Starts an orchestration Runner process under the runner supervisor.
+
+  This is an advanced API for custom orchestrator implementations.
+  For built-in patterns, use the composition functions (`round_robin/3`,
+  `supervisor/4`, etc.) instead.
 
   See `Agora.Orchestrator.Runner.start_link/1` for options.
   """
@@ -160,79 +248,6 @@ defmodule Agora do
   defp cleanup_stream(stream_task_pid, agent_pid) do
     Process.exit(stream_task_pid, :shutdown)
     Agora.Agent.Supervisor.stop_agent(agent_pid)
-  end
-
-  @doc """
-  Starts a streaming mode execution and returns an enumerable of `ModeEvent`s.
-
-  Supports both orchestrator modes (`:single`, `:round_robin`, `:group_chat`,
-  `:supervisor`, `:plan`, `:handoff`) and workflow modes (`:dag`, `:sequential`,
-  `:conditional`, `:parallel`). The returned stream emits `ModeEvent` structs
-  providing visibility into agent selection, step progress, handoffs, etc.
-
-  Resources are automatically cleaned up when the stream is fully consumed,
-  halted early, or if the caller process crashes.
-
-  ## Examples
-
-      # Orchestrator mode
-      {:ok, stream} = Agora.run_mode_stream(:single, "Hello",
-        agents: %{helper: config}
-      )
-
-      # Workflow mode
-      {:ok, stream} = Agora.run_mode_stream(:sequential, [
-        {:a, fn _r -> {:ok, 1} end},
-        {:b, fn _r -> {:ok, 2} end}
-      ])
-
-      stream
-      |> Enum.each(fn event -> IO.inspect(event.type) end)
-
-  """
-  @spec run_mode_stream(atom(), term(), keyword()) ::
-          {:ok, Enumerable.t()} | {:error, Error.t()}
-  def run_mode_stream(mode, input, opts \\ []) do
-    Execution.run_mode_stream(mode, input, opts)
-  end
-
-  @doc """
-  Unified mode-first execution entry point.
-
-  For orchestrator modes (`:single`, `:round_robin`, `:group_chat`, `:supervisor`, `:plan`, `:handoff`):
-  input is `String.t() | Message.t()`, `:agents` option required.
-
-  For workflow modes:
-
-    * `:dag` — input is `Workflow.t()` or module, workflow data via `:input` option
-    * `:sequential` — input is `[step_spec()]`, a list of step tuples
-    * `:conditional` — input is `{router_spec, [branch_spec()]}`, with optional `:merge`
-    * `:parallel` — input is `[step_spec()]`, with optional `:from`/`:to` source/sink steps
-
-  ## Examples
-
-      # Orchestrator mode
-      {:ok, response} = Agora.run_mode(:round_robin, "Hello",
-        agents: %{a: config_a, b: config_b},
-        termination: TerminationCondition.max_turns(5)
-      )
-
-      # Workflow modes
-      {:ok, results} = Agora.run_mode(:dag, workflow, input: data)
-      {:ok, results} = Agora.run_mode(:sequential, [{:a, &step_a/1}, {:b, &step_b/1}])
-      {:ok, results} = Agora.run_mode(:parallel, branches, from: {:src, &source/1})
-
-  """
-  @spec run_mode(atom(), term(), keyword()) ::
-          {:ok, Message.t() | map()} | {:error, Error.t()}
-  def run_mode(mode, input, opts \\ [])
-
-  def run_mode(mode, input, opts) when mode in [:dag, :sequential, :conditional, :parallel] do
-    Execution.run_workflow(mode, input, opts)
-  end
-
-  def run_mode(mode, input, opts) do
-    Execution.run(mode, input, opts)
   end
 
   @doc """

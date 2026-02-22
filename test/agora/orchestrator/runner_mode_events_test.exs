@@ -37,6 +37,7 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     receive do
       {:mode_event, %{metadata: %{test_id: ^test_id}} = event} ->
         collect_mode_events_acc(test_id, [event | acc], timeout)
+
       {:mode_event, _other} ->
         # Event from a different test, skip it
         collect_mode_events_acc(test_id, acc, timeout)
@@ -49,23 +50,24 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     test "emits full lifecycle: started → selected → step_started → step_completed → completed" do
       test_id = setup_mode_events()
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Single,
-        agents: %{helper: echo_config()},
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{helper: echo_config()},
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:ok, _msg} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
       types = Enum.map(events, & &1.type)
 
       assert types == [
-        :mode_started,
-        :agent_selected,
-        :step_started,
-        :step_completed,
-        :mode_completed
-      ]
+               :mode_started,
+               :agent_selected,
+               :step_started,
+               :step_completed,
+               :mode_completed
+             ]
 
       # Verify mode_started has redacted input
       started = Enum.find(events, &(&1.type == :mode_started))
@@ -94,12 +96,13 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     test "emits multiple agent_selected events" do
       test_id = setup_mode_events()
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.RoundRobin,
-        agents: %{a: echo_config(), b: echo_config()},
-        termination: TerminationCondition.max_turns(3),
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.RoundRobin,
+          agents: %{a: echo_config(), b: echo_config()},
+          termination: TerminationCondition.max_turns(3),
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:ok, _msg} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
@@ -119,30 +122,32 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
       test_id = setup_mode_events()
       counter = :counters.new(1, [:atomics])
 
-      config = AgentConfig.new!(
-        provider: :echo,
-        model: "echo",
-        provider_opts: [
-          echo_mode: :function,
-          echo_function: fn _messages, _config ->
-            count = :counters.get(counter, 1)
-            :counters.add(counter, 1, 1)
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              count = :counters.get(counter, 1)
+              :counters.add(counter, 1, 1)
 
-            if count == 0 do
-              {:ok, Agora.Message.assistant("HANDOFF:b:please handle this")}
-            else
-              {:ok, Agora.Message.assistant("Done!")}
+              if count == 0 do
+                {:ok, Agora.Message.assistant("HANDOFF:b:please handle this")}
+              else
+                {:ok, Agora.Message.assistant("Done!")}
+              end
             end
-          end
-        ]
-      )
+          ]
+        )
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Handoff,
-        agents: %{a: config, b: config},
-        orchestrator_opts: [initial_agent: :a],
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Handoff,
+          agents: %{a: config, b: config},
+          orchestrator_opts: [initial_agent: :a],
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:ok, _msg} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
@@ -165,39 +170,46 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
       test_id = setup_mode_events()
       counter = :counters.new(1, [:atomics])
 
-      planner_config = AgentConfig.new!(
-        provider: :echo,
-        model: "echo",
-        provider_opts: [
-          echo_mode: :function,
-          echo_function: fn _messages, _config ->
-            count = :counters.get(counter, 1)
-            :counters.add(counter, 1, 1)
+      planner_config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              count = :counters.get(counter, 1)
+              :counters.add(counter, 1, 1)
 
-            case count do
-              0 ->
-                {:ok, Agora.Message.assistant("PLAN\nSTEP:1:worker:Do the thing\nEND_PLAN")}
-              1 ->
-                {:ok, Agora.Message.assistant("Step result")}
-              2 ->
-                {:ok, Agora.Message.assistant("REVIEW:REPLAN:unsatisfactory")}
-              3 ->
-                {:ok, Agora.Message.assistant("PLAN\nSTEP:1:worker:Do it better\nEND_PLAN")}
-              4 ->
-                {:ok, Agora.Message.assistant("Better result")}
-              _ ->
-                {:ok, Agora.Message.assistant("REVIEW:COMPLETE:all done")}
+              case count do
+                0 ->
+                  {:ok, Agora.Message.assistant("PLAN\nSTEP:1:worker:Do the thing\nEND_PLAN")}
+
+                1 ->
+                  {:ok, Agora.Message.assistant("Step result")}
+
+                2 ->
+                  {:ok, Agora.Message.assistant("REVIEW:REPLAN:unsatisfactory")}
+
+                3 ->
+                  {:ok, Agora.Message.assistant("PLAN\nSTEP:1:worker:Do it better\nEND_PLAN")}
+
+                4 ->
+                  {:ok, Agora.Message.assistant("Better result")}
+
+                _ ->
+                  {:ok, Agora.Message.assistant("REVIEW:COMPLETE:all done")}
+              end
             end
-          end
-        ]
-      )
+          ]
+        )
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Plan,
-        agents: %{planner: planner_config, worker: planner_config},
-        orchestrator_opts: [planner_agent: :planner],
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Plan,
+          agents: %{planner: planner_config, worker: planner_config},
+          orchestrator_opts: [planner_agent: :planner],
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:ok, _msg} = Runner.run(pid, "Do something")
       events = collect_mode_events(test_id)
@@ -220,12 +232,13 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
       token = Agora.CancelToken.new()
       Agora.CancelToken.cancel(token)
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Single,
-        agents: %{helper: echo_config()},
-        cancel_token: token,
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{helper: echo_config()},
+          cancel_token: token,
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:error, %Error{type: :cancelled}} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
@@ -244,22 +257,24 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     test "emits mode_failed on orchestration error" do
       test_id = setup_mode_events()
 
-      config = AgentConfig.new!(
-        provider: :echo,
-        model: "echo",
-        provider_opts: [
-          echo_mode: :function,
-          echo_function: fn _messages, _config ->
-            {:error, Error.new(:provider_error, "LLM error")}
-          end
-        ]
-      )
+      config =
+        AgentConfig.new!(
+          provider: :echo,
+          model: "echo",
+          provider_opts: [
+            echo_mode: :function,
+            echo_function: fn _messages, _config ->
+              {:error, Error.new(:provider_error, "LLM error")}
+            end
+          ]
+        )
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Single,
-        agents: %{helper: config},
-        telemetry_metadata: %{test_id: test_id}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{helper: config},
+          telemetry_metadata: %{test_id: test_id}
+        )
 
       {:error, _} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
@@ -279,11 +294,12 @@ defmodule Agora.Orchestrator.RunnerModeEventsTest do
     test "custom metadata appears in mode events" do
       test_id = setup_mode_events()
 
-      {:ok, pid} = Runner.start_link(
-        orchestrator: Orchestrator.Single,
-        agents: %{helper: echo_config()},
-        telemetry_metadata: %{test_id: test_id, custom_key: "custom_value"}
-      )
+      {:ok, pid} =
+        Runner.start_link(
+          orchestrator: Orchestrator.Single,
+          agents: %{helper: echo_config()},
+          telemetry_metadata: %{test_id: test_id, custom_key: "custom_value"}
+        )
 
       {:ok, _msg} = Runner.run(pid, "Hello")
       events = collect_mode_events(test_id)
