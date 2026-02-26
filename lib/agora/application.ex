@@ -9,6 +9,7 @@ defmodule Agora.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :duplicate, name: Agora.EventBus.Registry},
+      %{id: :agora_cancel_pg, start: {:pg, :start_link, [Agora.CancelToken.pg_scope()]}},
       {Task.Supervisor, name: Agora.ToolSupervisor},
       {Task.Supervisor, name: Agora.WorkflowTaskSupervisor},
       {Task.Supervisor, name: Agora.StreamSupervisor},

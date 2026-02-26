@@ -397,6 +397,9 @@ defmodule Agora.Orchestrator.Runner do
             )
           end)
 
+        # Register streaming orchestration task in cancel group
+        if state.cancel_token, do: CancelToken.register(state.cancel_token, task_pid)
+
         monitor_ref = Process.monitor(task_pid)
 
         stream_info = %{
@@ -477,17 +480,20 @@ defmodule Agora.Orchestrator.Runner do
       ) do
     telemetry_meta = telemetry_metadata(state)
 
+    error =
+      if reason == :killed do
+        Error.new(:cancelled, "Stream task killed")
+      else
+        Error.new(:streaming_error, "Stream task crashed: #{inspect(reason)}")
+      end
+
     :telemetry.execute(
       [:agora, :orchestrator, :run, :stop],
       %{
         duration: System.monotonic_time() - state.stream_info.start_time,
         steps: length(state.history)
       },
-      Map.put(
-        telemetry_meta,
-        :error,
-        Error.new(:streaming_error, "Stream task crashed: #{inspect(reason)}")
-      )
+      Map.put(telemetry_meta, :error, error)
     )
 
     {:noreply, %{state | status: :idle, stream_info: nil}}
@@ -641,7 +647,7 @@ defmodule Agora.Orchestrator.Runner do
         emit_mode_event(state, :step_started, %{agent: agent_name, turn: turn})
 
         step_start = System.monotonic_time()
-        result = safe_agent_run(pid, agent_name, input_msg)
+        result = safe_agent_run(pid, agent_name, input_msg, state.cancel_token)
 
         :telemetry.execute(
           [:agora, :orchestrator, :step, :stop],
@@ -696,8 +702,9 @@ defmodule Agora.Orchestrator.Runner do
     end
   end
 
-  defp safe_agent_run(pid, agent_name, input_msg) do
-    Agent.run(pid, input_msg)
+  defp safe_agent_run(pid, agent_name, input_msg, cancel_token) do
+    opts = if cancel_token, do: [cancel_token: cancel_token], else: []
+    Agent.run(pid, input_msg, opts)
   catch
     kind, reason ->
       {:error,

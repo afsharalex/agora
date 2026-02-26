@@ -105,7 +105,13 @@ defmodule Agora.Stream do
           do_reduce(ref, pid, mref, error_fn, fun.(event, acc), fun)
 
         {:DOWN, ^mref, :process, ^pid, reason} ->
-          error = Error.new(:streaming_error, "Stream process crashed: #{inspect(reason)}")
+          error =
+            if reason == :killed do
+              Error.new(:cancelled, "Stream process killed")
+            else
+              Error.new(:streaming_error, "Stream process crashed: #{inspect(reason)}")
+            end
+
           error_event = make_error(error_fn, error)
 
           case fun.(error_event, acc) do

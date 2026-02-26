@@ -33,6 +33,19 @@ defmodule Agora do
       config = Agora.AgentConfig.new!(provider: :echo, model: "echo")
       {:ok, response} = Agora.run(config, "Hello")
 
+  ## Cancellation
+
+      token = Agora.CancelToken.new()
+
+      # Soft cancel (cooperative, at loop boundaries):
+      Agora.CancelToken.cancel(token)
+
+      # Hard kill (immediate, kills all registered workers):
+      Agora.CancelToken.kill(token)
+
+      # Pass to any execution surface:
+      Agora.run(config, "Hello", cancel_token: token)
+
   ## Advanced
 
   For deterministic DAG workflows with checkpoints and retries, see `Agora.run_workflow/2`
@@ -143,12 +156,17 @@ defmodule Agora do
   @doc """
   Sends a message and returns a stream of incremental events.
 
-  Convenience wrapper for `Agora.Agent.stream_run/2`.
+  Convenience wrapper for `Agora.Agent.stream_run/3`.
+
+  ## Options
+
+    * `:cancel_token` — `%CancelToken{}` for cooperative + hard-kill cancellation
+
   """
-  @spec stream_run(GenServer.server(), String.t() | Agora.Message.t()) ::
+  @spec stream_run(GenServer.server(), String.t() | Agora.Message.t(), keyword()) ::
           {:ok, Agora.Stream.t()} | {:error, Agora.Error.t()}
-  def stream_run(agent, input) do
-    Agora.Agent.stream_run(agent, input)
+  def stream_run(agent, input, opts \\ []) do
+    Agora.Agent.stream_run(agent, input, opts)
   end
 
   @doc """
@@ -156,19 +174,33 @@ defmodule Agora do
 
   The agent is always cleaned up after the call, even on error.
 
+  ## Options
+
+    * `:cancel_token` — `%CancelToken{}` for cooperative + hard-kill cancellation
+
   ## Examples
 
       config = AgentConfig.new!(provider: :echo, model: "echo")
       {:ok, response} = Agora.run(config, "Hello")
 
+      # With cancellation:
+      token = CancelToken.new()
+      {:ok, response} = Agora.run(config, "Hello", cancel_token: token)
+
   """
-  @spec run(AgentConfig.t(), String.t() | Message.t()) ::
+  @spec run(AgentConfig.t(), String.t() | Message.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
-  def run(%AgentConfig{} = config, input) do
+  def run(%AgentConfig{} = config, input, opts \\ []) do
+    with :ok <- validate_cancel_token_opt(opts) do
+      do_run(config, input, opts)
+    end
+  end
+
+  defp do_run(config, input, opts) do
     case Agora.Agent.Supervisor.start_agent(config) do
       {:ok, pid} ->
         try do
-          Agora.Agent.run(pid, input)
+          Agora.Agent.run(pid, input, opts)
         after
           Agora.Agent.Supervisor.stop_agent(pid)
         end
@@ -189,6 +221,10 @@ defmodule Agora do
   Returns `{:ok, Enumerable.t()}` (not `Agora.Stream.t()`) because the stream is
   wrapped with cleanup logic.
 
+  ## Options
+
+    * `:cancel_token` — `%CancelToken{}` for cooperative + hard-kill cancellation
+
   ## Examples
 
       config = AgentConfig.new!(provider: :echo, model: "echo")
@@ -199,14 +235,20 @@ defmodule Agora do
       |> Enum.each(fn event -> IO.write(event.data.text) end)
 
   """
-  @spec stream(AgentConfig.t(), String.t() | Message.t()) ::
+  @spec stream(AgentConfig.t(), String.t() | Message.t(), keyword()) ::
           {:ok, Enumerable.t()} | {:error, Error.t()}
-  def stream(%AgentConfig{} = config, input) do
+  def stream(%AgentConfig{} = config, input, opts \\ []) do
+    with :ok <- validate_cancel_token_opt(opts) do
+      do_stream(config, input, opts)
+    end
+  end
+
+  defp do_stream(config, input, opts) do
     caller = self()
 
     case Agora.Agent.Supervisor.start_agent(config) do
       {:ok, pid} ->
-        case Agora.Agent.stream_run(pid, input) do
+        case Agora.Agent.stream_run(pid, input, opts) do
           {:ok, agora_stream} ->
             stream_task_pid = agora_stream.pid
 
@@ -313,6 +355,28 @@ defmodule Agora do
      Error.new(
        :config_error,
        "run_workflow expects a %Workflow{} struct or a module atom, got: #{inspect(other)}"
+     )}
+  end
+
+  defp validate_cancel_token_opt(opts) when is_list(opts) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+
+    if cancel_token != nil and not match?(%Agora.CancelToken{}, cancel_token) do
+      {:error,
+       Error.new(
+         :config_error,
+         ":cancel_token must be a %CancelToken{} struct, got: #{inspect(cancel_token)}"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp validate_cancel_token_opt(opts) do
+    {:error,
+     Error.new(
+       :config_error,
+       "opts must be a keyword list, got: #{inspect(opts)}"
      )}
   end
 

@@ -18,12 +18,22 @@ defmodule Agora.Agent do
 
   ## Concurrency
 
-  `run/2` uses `GenServer.call` with `:infinity` timeout. Because the reasoning
-  loop executes inside `handle_call`, concurrent `run/2` calls queue behind each
+  `run/2` uses `GenServer.call` with `:infinity` timeout. The reasoning loop
+  is spawned as a supervised task under `Agora.ToolSupervisor` and the
+  GenServer blocks on `Task.yield(:infinity)`. This preserves the existing
+  mailbox-queuing behavior where concurrent `run/2` calls queue behind each
   other (standard GenServer/gen_statem mailbox serialization). The iteration
   limit on the agent config bounds each individual run. `get_messages/1` and
   `get_status/1` also queue — they return accurate state between runs but are
   not observable during a run.
+
+  ## Cancellation
+
+  `run/3` and `stream_run/3` accept a `:cancel_token` option for two-tier
+  cancellation. Soft cancel (`CancelToken.cancel/1`) is checked at loop
+  boundaries. Hard kill (`CancelToken.kill/1`) terminates the spawned
+  reasoning task immediately; the GenServer detects the kill via
+  `Task.yield` and returns `{:error, %Error{type: :cancelled}}`.
 
   ## Example
 
@@ -79,16 +89,22 @@ defmodule Agora.Agent do
   Blocks until the reasoning loop completes. Concurrent calls queue behind
   each other due to GenServer serialization.
 
+  ## Options
+
+    * `:cancel_token` — `%CancelToken{}` for cooperative + hard-kill cancellation
+
   Returns `{:ok, %Message{}}` on success or `{:error, %Error{}}` on failure.
   """
-  @spec run(GenServer.server(), String.t() | Message.t()) ::
+  @spec run(GenServer.server(), String.t() | Message.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
-  def run(agent, input) when is_binary(input) do
-    run(agent, Message.user(input))
+  def run(agent, input, opts \\ [])
+
+  def run(agent, input, opts) when is_binary(input) do
+    run(agent, Message.user(input), opts)
   end
 
-  def run(agent, %Message{} = message) do
-    GenServer.call(agent, {:run, message}, :infinity)
+  def run(agent, %Message{} = message, opts) do
+    GenServer.call(agent, {:run, message, opts}, :infinity)
   end
 
   @doc """
@@ -98,17 +114,23 @@ defmodule Agora.Agent do
   caller can enumerate to receive `StreamEvent` structs as the provider
   generates tokens. The GenServer remains responsive during streaming.
 
+  ## Options
+
+    * `:cancel_token` — `%CancelToken{}` for cooperative + hard-kill cancellation
+
   Returns `{:error, %Error{}}` if the agent is busy or the provider does
   not support streaming.
   """
-  @spec stream_run(GenServer.server(), String.t() | Message.t()) ::
+  @spec stream_run(GenServer.server(), String.t() | Message.t(), keyword()) ::
           {:ok, Agora.Stream.t()} | {:error, Error.t()}
-  def stream_run(agent, input) when is_binary(input) do
-    stream_run(agent, Message.user(input))
+  def stream_run(agent, input, opts \\ [])
+
+  def stream_run(agent, input, opts) when is_binary(input) do
+    stream_run(agent, Message.user(input), opts)
   end
 
-  def stream_run(agent, %Message{} = message) do
-    GenServer.call(agent, {:stream_run, message}, :infinity)
+  def stream_run(agent, %Message{} = message, opts) do
+    GenServer.call(agent, {:stream_run, message, opts}, :infinity)
   end
 
   @doc """
@@ -122,8 +144,9 @@ defmodule Agora.Agent do
   @doc """
   Returns the current agent status.
 
-  Note: because `run/2` executes synchronously inside `handle_call`, this
-  will always return `:idle` (calls queue behind any active run).
+  Note: because `run/2` blocks the GenServer (via `Task.yield`), this
+  will always return `:idle` when called from an external process (calls
+  queue behind any active run).
   """
   @spec get_status(GenServer.server()) :: status()
   def get_status(agent) do

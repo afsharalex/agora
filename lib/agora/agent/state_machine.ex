@@ -4,16 +4,20 @@ defmodule Agora.Agent.StateMachine do
   # gen_statem backend for lifecycle-enabled agents.
   # Uses :handle_event_function callback mode with :state_enter for
   # lifecycle state management (on_enter/on_exit hooks, state timeouts).
+  #
+  # The reasoning loop is spawned as a supervised task under Agora.ToolSupervisor
+  # so that hard-kill cancellation can terminate it. The gen_statem blocks on
+  # Task.yield(:infinity) to preserve mailbox-queuing semantics.
 
   @behaviour :gen_statem
 
   require Logger
 
-  alias Agora.{AgentConfig, Error, Memory, Message, StreamEvent}
+  alias Agora.{AgentConfig, CancelToken, Error, Memory, Message, StreamEvent}
   alias Agora.Agent.{Lifecycle, Loop, StreamLoop}
   alias Agora.Agent.Lifecycle.StateConfig
 
-  @messages_key :agora_agent_sm_messages
+  @messages_key :agora_agent_sm_loop_messages
   @run_start_key :agora_agent_sm_run_start
 
   @spec start_link(AgentConfig.t(), keyword()) :: GenServer.on_start()
@@ -114,58 +118,31 @@ defmodule Agora.Agent.StateMachine do
     {:keep_state, data, actions}
   end
 
-  # --- Run (synchronous) ---
+  # --- Run (synchronous) — new 3-tuple format with opts ---
 
   def handle_event(
         {:call, from},
-        {:run, %Message{} = message},
+        {:run, %Message{} = message, opts},
         state_name,
         %{status: :idle} = data
       ) do
-    data = %{data | status: :running, iteration: 0, middleware_metadata: %{}}
-    messages = data.messages ++ [message]
-    telemetry_meta = telemetry_metadata(data.config)
+    case validate_run_opts(opts) do
+      {:error, _} = error ->
+        {:keep_state_and_data, [{:reply, from, error}]}
 
-    :telemetry.execute(
-      [:agora, :agent, :run, :start],
-      %{system_time: System.system_time()},
-      telemetry_meta
-    )
-
-    start_time = System.monotonic_time()
-    Process.put(@run_start_key, start_time)
-
-    {result, run_result, final_data} = safe_reasoning_loop(messages, data)
-
-    Process.delete(@run_start_key)
-
-    # Memory save + reload
-    {result, final_data} = memory_save_and_reload(result, final_data)
-
-    duration = System.monotonic_time() - start_time
-    final_data = %{final_data | status: :idle}
-
-    run_stop_meta =
-      case result do
-        {:ok, _response} -> telemetry_meta
-        {:error, error} -> Map.put(telemetry_meta, :error, error)
-      end
-
-    :telemetry.execute(
-      [:agora, :agent, :run, :stop],
-      %{duration: duration, iterations: final_data.iteration},
-      run_stop_meta
-    )
-
-    # Evaluate transitions against RunResult facts
-    case evaluate_transitions(run_result, state_name, final_data) do
-      {:transition, target, trigger} ->
-        emit_transition_telemetry(state_name, target, trigger, data.config)
-        {:next_state, target, final_data, [{:reply, from, result}]}
-
-      :no_transition ->
-        {:keep_state, final_data, [{:reply, from, result}]}
+      :ok ->
+        do_handle_run(from, message, opts, state_name, data)
     end
+  end
+
+  # Backward compat: old 2-tuple format without opts
+  def handle_event({:call, from}, {:run, %Message{} = message}, state_name, data) do
+    handle_event({:call, from}, {:run, message, []}, state_name, data)
+  end
+
+  def handle_event({:call, from}, {:run, _, _}, _state_name, %{status: status} = _data) do
+    {:keep_state_and_data,
+     [{:reply, from, Error.wrap(:config_error, "Agent is busy (status: #{status})")}]}
   end
 
   def handle_event({:call, from}, {:run, _}, _state_name, %{status: status} = _data) do
@@ -173,54 +150,31 @@ defmodule Agora.Agent.StateMachine do
      [{:reply, from, Error.wrap(:config_error, "Agent is busy (status: #{status})")}]}
   end
 
-  # --- Stream run ---
+  # --- Stream run — new 3-tuple format with opts ---
 
   def handle_event(
         {:call, from},
-        {:stream_run, %Message{} = message},
+        {:stream_run, %Message{} = message, opts},
         state_name,
         %{status: :idle} = data
       ) do
-    {caller_pid, _tag} = from
-    data = %{data | status: :streaming, iteration: 0, middleware_metadata: %{}}
-    messages = data.messages ++ [message]
-    # Capture old_messages AFTER appending user input so derive_facts excludes it
-    old_messages = messages
-    agent_ref = make_ref()
-    agent_pid = self()
-    telemetry_meta = telemetry_metadata(data.config)
+    case validate_run_opts(opts) do
+      {:error, _} = error ->
+        {:keep_state_and_data, [{:reply, from, error}]}
 
-    :telemetry.execute(
-      [:agora, :agent, :stream_run, :start],
-      %{system_time: System.system_time()},
-      telemetry_meta
-    )
+      :ok ->
+        do_handle_stream_run(from, message, opts, state_name, data)
+    end
+  end
 
-    start_time = System.monotonic_time()
+  # Backward compat: old 2-tuple format without opts
+  def handle_event({:call, from}, {:stream_run, %Message{} = message}, state_name, data) do
+    handle_event({:call, from}, {:stream_run, message, []}, state_name, data)
+  end
 
-    {:ok, task_pid} =
-      Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
-        result = safe_streaming_loop(messages, data, caller_pid, agent_ref)
-
-        send(
-          agent_pid,
-          {:stream_complete, agent_ref, start_time, state_name, old_messages, result}
-        )
-      end)
-
-    monitor_ref = Process.monitor(task_pid)
-
-    stream_info = %{
-      ref: agent_ref,
-      task_pid: task_pid,
-      monitor_ref: monitor_ref,
-      start_time: start_time
-    }
-
-    stream = Agora.Stream.new(agent_ref, task_pid, caller_pid)
-
-    {:keep_state, %{data | messages: messages, stream_info: stream_info},
-     [{:reply, from, {:ok, stream}}]}
+  def handle_event({:call, from}, {:stream_run, _, _}, _state_name, %{status: status} = _data) do
+    {:keep_state_and_data,
+     [{:reply, from, Error.wrap(:config_error, "Agent is busy (status: #{status})")}]}
   end
 
   def handle_event({:call, from}, {:stream_run, _}, _state_name, %{status: status} = _data) do
@@ -353,11 +307,18 @@ defmodule Agora.Agent.StateMachine do
 
   def handle_event(
         :info,
-        {:DOWN, mref, :process, pid, _reason},
+        {:DOWN, mref, :process, pid, reason},
         current_state,
         %{stream_info: %{monitor_ref: mref, task_pid: pid}} = data
       ) do
     telemetry_meta = telemetry_metadata(data.config)
+
+    error =
+      if reason == :killed do
+        Error.new(:cancelled, "Stream task killed")
+      else
+        Error.new(:streaming_error, "Stream task crashed: #{inspect(reason)}")
+      end
 
     :telemetry.execute(
       [:agora, :agent, :stream_run, :stop],
@@ -365,7 +326,7 @@ defmodule Agora.Agent.StateMachine do
         duration: System.monotonic_time() - data.stream_info.start_time,
         iterations: data.iteration
       },
-      Map.put(telemetry_meta, :error, Error.new(:streaming_error, "Stream task crashed"))
+      Map.put(telemetry_meta, :error, error)
     )
 
     actions = timeout_actions(current_state, data.lifecycle)
@@ -375,6 +336,175 @@ defmodule Agora.Agent.StateMachine do
   # Ignore stray messages
   def handle_event(:info, _msg, _state_name, _data) do
     :keep_state_and_data
+  end
+
+  # --- Private: Run helpers (extracted to keep handle_event clauses grouped) ---
+
+  defp validate_run_opts(opts) when is_list(opts) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+
+    if cancel_token != nil and not match?(%CancelToken{}, cancel_token) do
+      {:error,
+       Error.new(
+         :config_error,
+         ":cancel_token must be a %CancelToken{} struct, got: #{inspect(cancel_token)}"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp validate_run_opts(opts) do
+    {:error,
+     Error.new(
+       :config_error,
+       "opts must be a keyword list, got: #{inspect(opts)}"
+     )}
+  end
+
+  defp do_handle_run(from, message, opts, state_name, data) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+    data = %{data | status: :running, iteration: 0, middleware_metadata: %{}}
+    messages = data.messages ++ [message]
+    telemetry_meta = telemetry_metadata(data.config)
+
+    :telemetry.execute(
+      [:agora, :agent, :run, :start],
+      %{system_time: System.system_time()},
+      telemetry_meta
+    )
+
+    start_time = System.monotonic_time()
+    Process.put(@run_start_key, start_time)
+
+    # Spawn reasoning loop as killable task
+    task =
+      if cancel_token do
+        t =
+          Task.Supervisor.async_nolink(Agora.ToolSupervisor, fn ->
+            receive do
+              :registered -> safe_reasoning_loop(messages, data, cancel_token, start_time)
+            end
+          end)
+
+        CancelToken.register(cancel_token, t.pid)
+        send(t.pid, :registered)
+        t
+      else
+        Task.Supervisor.async_nolink(Agora.ToolSupervisor, fn ->
+          safe_reasoning_loop(messages, data, cancel_token, start_time)
+        end)
+      end
+
+    {result, run_result, final_data} =
+      case Task.yield(task, :infinity) do
+        {:ok, {result, run_result, loop_state_updates}} ->
+          {result, run_result, apply_loop_state(data, loop_state_updates)}
+
+        {:exit, :killed} ->
+          {{:error, Error.new(:cancelled, "Agent execution killed")}, nil,
+           %{data | messages: messages}}
+
+        {:exit, reason} ->
+          {{:error, Error.new(:unknown, "Reasoning loop crashed: #{inspect(reason)}")}, nil,
+           %{data | messages: messages}}
+      end
+
+    if cancel_token, do: CancelToken.unregister(cancel_token, task.pid)
+
+    Process.delete(@run_start_key)
+
+    # Memory save + reload
+    {result, final_data} = memory_save_and_reload(result, final_data)
+
+    duration = System.monotonic_time() - start_time
+    final_data = %{final_data | status: :idle}
+
+    run_stop_meta =
+      case result do
+        {:ok, _response} -> telemetry_meta
+        {:error, error} -> Map.put(telemetry_meta, :error, error)
+      end
+
+    :telemetry.execute(
+      [:agora, :agent, :run, :stop],
+      %{duration: duration, iterations: final_data.iteration},
+      run_stop_meta
+    )
+
+    # Evaluate transitions against RunResult facts
+    case evaluate_transitions(run_result, state_name, final_data) do
+      {:transition, target, trigger} ->
+        emit_transition_telemetry(state_name, target, trigger, data.config)
+        {:next_state, target, final_data, [{:reply, from, result}]}
+
+      :no_transition ->
+        {:keep_state, final_data, [{:reply, from, result}]}
+    end
+  end
+
+  defp do_handle_stream_run(from, message, opts, state_name, data) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+    {caller_pid, _tag} = from
+    data = %{data | status: :streaming, iteration: 0, middleware_metadata: %{}}
+    messages = data.messages ++ [message]
+    # Capture old_messages AFTER appending user input so derive_facts excludes it
+    old_messages = messages
+    agent_ref = make_ref()
+    agent_pid = self()
+    telemetry_meta = telemetry_metadata(data.config)
+
+    :telemetry.execute(
+      [:agora, :agent, :stream_run, :start],
+      %{system_time: System.system_time()},
+      telemetry_meta
+    )
+
+    start_time = System.monotonic_time()
+
+    {:ok, task_pid} =
+      if cancel_token do
+        {:ok, pid} =
+          Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
+            receive do
+              :registered ->
+                result =
+                  safe_streaming_loop(messages, data, caller_pid, agent_ref, cancel_token)
+
+                send(
+                  agent_pid,
+                  {:stream_complete, agent_ref, start_time, state_name, old_messages, result}
+                )
+            end
+          end)
+
+        CancelToken.register(cancel_token, pid)
+        send(pid, :registered)
+        {:ok, pid}
+      else
+        Task.Supervisor.start_child(Agora.StreamSupervisor, fn ->
+          result = safe_streaming_loop(messages, data, caller_pid, agent_ref, cancel_token)
+
+          send(
+            agent_pid,
+            {:stream_complete, agent_ref, start_time, state_name, old_messages, result}
+          )
+        end)
+      end
+
+    monitor_ref = Process.monitor(task_pid)
+
+    stream_info = %{
+      ref: agent_ref,
+      task_pid: task_pid,
+      monitor_ref: monitor_ref,
+      start_time: start_time
+    }
+
+    stream = Agora.Stream.new(agent_ref, task_pid, caller_pid)
+
+    {:keep_state, %{data | messages: messages, stream_info: stream_info},
+     [{:reply, from, {:ok, stream}}]}
   end
 
   # --- Private: Config resolution ---
@@ -388,6 +518,12 @@ defmodule Agora.Agent.StateMachine do
         max_iterations: overlay.max_iterations || base.max_iterations,
         provider_opts: overlay.provider_opts || base.provider_opts
     }
+  end
+
+  # --- Private: Apply loop state updates ---
+
+  defp apply_loop_state(data, %{messages: messages, iteration: iteration, middleware_metadata: mm}) do
+    %{data | messages: messages, iteration: iteration, middleware_metadata: mm}
   end
 
   # --- Private: Memory ---
@@ -558,9 +694,9 @@ defmodule Agora.Agent.StateMachine do
     }
   end
 
-  # --- Private: Safe wrappers ---
+  # --- Private: Safe wrappers (run inside spawned task) ---
 
-  defp safe_reasoning_loop(messages, data) do
+  defp safe_reasoning_loop(messages, data, cancel_token, run_start_time) do
     Process.put(@messages_key, messages)
 
     loop_state = %Loop.State{
@@ -568,7 +704,8 @@ defmodule Agora.Agent.StateMachine do
       messages: messages,
       middleware_metadata: data.middleware_metadata,
       iteration: data.iteration,
-      on_messages_update: fn msgs -> Process.put(@messages_key, msgs) end
+      on_messages_update: fn msgs -> Process.put(@messages_key, msgs) end,
+      cancel_token: cancel_token
     }
 
     %Loop.RunResult{outcome: outcome, state: final_loop_state} = run_result = Loop.run(loop_state)
@@ -581,19 +718,18 @@ defmodule Agora.Agent.StateMachine do
         {:error, _} = err -> err
       end
 
-    final_data = %{
-      data
-      | messages: final_loop_state.messages,
-        iteration: final_loop_state.iteration,
-        middleware_metadata: final_loop_state.middleware_metadata
+    loop_state_updates = %{
+      messages: final_loop_state.messages,
+      iteration: final_loop_state.iteration,
+      middleware_metadata: final_loop_state.middleware_metadata
     }
 
-    {result, run_result, final_data}
+    {result, run_result, loop_state_updates}
   catch
     kind, reason ->
       stacktrace = __STACKTRACE__
       recovered_messages = Process.delete(@messages_key) || messages
-      run_start = Process.delete(@run_start_key) || System.monotonic_time()
+      run_start = run_start_time
 
       error =
         Error.new(
@@ -613,10 +749,15 @@ defmodule Agora.Agent.StateMachine do
         })
       )
 
-      {{:error, error}, nil, %{data | messages: recovered_messages}}
+      {{:error, error}, nil,
+       %{
+         messages: recovered_messages,
+         iteration: data.iteration,
+         middleware_metadata: data.middleware_metadata
+       }}
   end
 
-  defp safe_streaming_loop(messages, data, caller, agent_ref) do
+  defp safe_streaming_loop(messages, data, caller, agent_ref, cancel_token) do
     emit_fn = fn event -> send(caller, {Agora.Stream, agent_ref, event}) end
 
     loop_state = %Loop.State{
@@ -624,7 +765,8 @@ defmodule Agora.Agent.StateMachine do
       messages: messages,
       middleware_metadata: data.middleware_metadata,
       iteration: data.iteration,
-      on_messages_update: nil
+      on_messages_update: nil,
+      cancel_token: cancel_token
     }
 
     StreamLoop.run(loop_state, emit_fn)

@@ -17,7 +17,7 @@ defmodule Agora.ToolBroker do
 
   """
 
-  alias Agora.{ToolCall, ToolResult, Tool}
+  alias Agora.{CancelToken, ToolCall, ToolResult, Tool}
 
   @default_supervisor Agora.ToolSupervisor
 
@@ -58,6 +58,7 @@ defmodule Agora.ToolBroker do
   def execute(tool_calls, tools, context \\ %{}, opts \\ []) do
     supervisor = Keyword.get(opts, :supervisor, @default_supervisor)
     validate? = Keyword.get(opts, :validate, true)
+    cancel_token = Keyword.get(opts, :cancel_token)
 
     tool_map = build_tool_map(tools)
     start_time = System.monotonic_time(:millisecond)
@@ -73,12 +74,27 @@ defmodule Agora.ToolBroker do
           meta
         )
 
-        task =
-          Task.Supervisor.async_nolink(supervisor, fn ->
-            execute_single(tool_call, tool_map, context, validate?)
-          end)
+        if cancel_token do
+          # Synchronize spawn and registration: task blocks until parent
+          # registers it in the cancel group, closing the race window.
+          task =
+            Task.Supervisor.async_nolink(supervisor, fn ->
+              receive do
+                :registered -> execute_single(tool_call, tool_map, context, validate?)
+              end
+            end)
 
-        {task, tool_call, timeout, meta, System.monotonic_time()}
+          CancelToken.register(cancel_token, task.pid)
+          send(task.pid, :registered)
+          {task, tool_call, timeout, meta, System.monotonic_time()}
+        else
+          task =
+            Task.Supervisor.async_nolink(supervisor, fn ->
+              execute_single(tool_call, tool_map, context, validate?)
+            end)
+
+          {task, tool_call, timeout, meta, System.monotonic_time()}
+        end
       end)
 
     results =
@@ -105,6 +121,9 @@ defmodule Agora.ToolBroker do
                  "Tool execution timed out after #{timeout}ms"
                ), :timeout}
           end
+
+        # Unregister tool task from cancel group
+        if cancel_token, do: CancelToken.unregister(cancel_token, task.pid)
 
         Agora.Telemetry.emit(
           [:agora, :tool, :call, :stop],

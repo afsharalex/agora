@@ -140,3 +140,18 @@ Phases 0–10 complete plus agent-first refocusing.
 - `Agora.Stream` — Enumerable wrapper; ownership enforced; guaranteed terminal signal
 - `Agora.Provider.SSE` — shared SSE line parser
 - Telemetry: `[:agora, :provider, :stream, :start | :stop]` and `[:agora, :agent, :stream_run, :start | :stop]`
+
+### Cancellation System (Phase 11)
+
+Two-tier cancellation via `Agora.CancelToken`:
+
+- **Soft cancel** (`cancel/1`) — cooperative boundary checks at: top of each loop iteration, before tool execution, between stream relay chunks
+- **Hard kill** (`kill/1`) — sets both flags + `Process.exit(pid, :kill)` all processes registered in `:pg` group
+- `:pg` scope `Agora.CancelToken.pg_scope()` started in `Agora.Application` supervision tree
+- Worker tasks (reasoning loop, tool tasks, stream tasks, provider stream tasks) are registered via `CancelToken.register/2`
+- Server processes (Agent GenServer, Runner GenServer) are NEVER registered — they detect worker death and return `{:error, :cancelled}`
+- Late joiner auto-kill: `register/2` after `kill/1` immediately kills the registrant
+- Agent reasoning loop spawned as supervised task (`Task.Supervisor.async_nolink`), GenServer blocks on `Task.yield(:infinity)` — preserves mailbox queue semantics
+- Cancel token threads through all 3 execution surfaces: orchestrator→agent (`Runner.safe_agent_run`), workflow→agent (`Executor.execute_handler`), agent-as-tool→child agent (`AgentTool.build_function`)
+- Public API: `Agora.run/3`, `Agora.stream/3`, `Agent.run/3`, `Agent.stream_run/3` accept `:cancel_token` option
+- Telemetry: `[:agora, :cancel, :soft]` and `[:agora, :cancel, :kill]` events

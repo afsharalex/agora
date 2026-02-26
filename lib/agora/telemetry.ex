@@ -3,8 +3,8 @@ defmodule Agora.Telemetry do
   Telemetry helpers and canonical event documentation for the Agora framework.
 
   This module provides thin wrappers around `:telemetry` functions and serves
-  as the single reference for all telemetry events emitted by Agora (33 events
-  across 12 event prefixes).
+  as the single reference for all telemetry events emitted by Agora (37 events
+  across 14 event prefixes).
 
   ## Event Reference
 
@@ -140,6 +140,15 @@ defmodule Agora.Telemetry do
   |---|---|---|
   | `[:agora, :mode, :event]` | `%{system_time}` | `%{event: ModeEvent.t()}` merged with `:telemetry_metadata` |
   | `[:agora, :mode, :context_compacted]` | `%{system_time}` | `%{strategy, before, after}` merged with `:telemetry_metadata` |
+
+  ### Cancellation Events
+
+  Emitted by `Agora.CancelToken` when cancellation or kill operations are invoked.
+
+  | Event | Measurements | Metadata |
+  |---|---|---|
+  | `[:agora, :cancel, :soft]` | `%{system_time}` | `%{}` |
+  | `[:agora, :cancel, :kill]` | `%{system_time}` | `%{group_size}` — number of processes in the kill group at time of kill |
   """
 
   @doc """

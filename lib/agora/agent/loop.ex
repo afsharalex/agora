@@ -7,7 +7,7 @@ defmodule Agora.Agent.Loop do
   # and returns a RunResult with the outcome, updated state, and accumulated facts
   # about what happened during execution.
 
-  alias Agora.{AgentConfig, Error, Message, Provider, ToolBroker}
+  alias Agora.{AgentConfig, CancelToken, Error, Message, Provider, ToolBroker}
   alias Agora.Middleware.{Chain, Context}
 
   defmodule State do
@@ -18,10 +18,18 @@ defmodule Agora.Agent.Loop do
             messages: [Agora.Message.t()],
             middleware_metadata: map(),
             iteration: non_neg_integer(),
-            on_messages_update: (list() -> :ok) | nil
+            on_messages_update: (list() -> :ok) | nil,
+            cancel_token: Agora.CancelToken.t() | nil
           }
 
-    defstruct [:config, :messages, :on_messages_update, middleware_metadata: %{}, iteration: 0]
+    defstruct [
+      :config,
+      :messages,
+      :on_messages_update,
+      :cancel_token,
+      middleware_metadata: %{},
+      iteration: 0
+    ]
   end
 
   defmodule RunResult do
@@ -57,103 +65,129 @@ defmodule Agora.Agent.Loop do
 
   # --- Private: Main recursion ---
 
-  defp do_run(%State{iteration: iteration, config: config} = state, facts) do
+  defp do_run(
+         %State{iteration: iteration, config: config, cancel_token: cancel_token} = state,
+         facts
+       ) do
     # Crash recovery hook: called at the start of each iteration
     if state.on_messages_update, do: state.on_messages_update.(state.messages)
 
-    if iteration >= config.max_iterations do
-      error =
-        Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
-          max_iterations: config.max_iterations,
-          iterations: iteration
-        })
-
+    # Check cancellation before anything else
+    if cancel_token && CancelToken.cancelled?(cancel_token) do
       %RunResult{
-        outcome: {:error, error},
-        state: %{state | messages: state.messages},
+        outcome: {:error, Error.new(:cancelled, "Agent execution cancelled")},
+        state: state,
         facts: facts
       }
     else
-      iteration = iteration + 1
-      state = %{state | iteration: iteration}
-      telemetry_meta = telemetry_metadata(config)
+      if iteration >= config.max_iterations do
+        error =
+          Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
+            max_iterations: config.max_iterations,
+            iterations: iteration
+          })
 
-      :telemetry.execute(
-        [:agora, :agent, :loop_iteration, :start],
-        %{system_time: System.system_time()},
-        Map.put(telemetry_meta, :iteration, iteration)
-      )
+        %RunResult{
+          outcome: {:error, error},
+          state: %{state | messages: state.messages},
+          facts: facts
+        }
+      else
+        iteration = iteration + 1
+        state = %{state | iteration: iteration}
+        telemetry_meta = telemetry_metadata(config)
 
-      iter_start = System.monotonic_time()
-      middleware = config.middleware
+        :telemetry.execute(
+          [:agora, :agent, :loop_iteration, :start],
+          %{system_time: System.system_time()},
+          Map.put(telemetry_meta, :iteration, iteration)
+        )
 
-      case do_iteration(state.messages, config, middleware, state.middleware_metadata) do
-        {:continue, new_messages, new_metadata, iter_facts} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, true)
-          )
+        iter_start = System.monotonic_time()
+        middleware = config.middleware
 
-          # Accumulate facts from this iteration
-          facts = merge_facts(facts, iter_facts)
+        case do_iteration(
+               state.messages,
+               config,
+               middleware,
+               state.middleware_metadata,
+               cancel_token
+             ) do
+          {:continue, new_messages, new_metadata, iter_facts} ->
+            :telemetry.execute(
+              [:agora, :agent, :loop_iteration, :stop],
+              %{duration: System.monotonic_time() - iter_start},
+              telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, true)
+            )
 
-          do_run(
-            %{state | messages: new_messages, middleware_metadata: new_metadata},
-            facts
-          )
+            # Accumulate facts from this iteration
+            facts = merge_facts(facts, iter_facts)
 
-        {:done, response, new_messages, iter_facts} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, false)
-          )
+            do_run(
+              %{state | messages: new_messages, middleware_metadata: new_metadata},
+              facts
+            )
 
-          facts =
-            merge_facts(facts, iter_facts)
-            |> Map.put(:final_response, response)
+          {:done, response, new_messages, iter_facts} ->
+            :telemetry.execute(
+              [:agora, :agent, :loop_iteration, :stop],
+              %{duration: System.monotonic_time() - iter_start},
+              telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:has_tool_calls, false)
+            )
 
-          %RunResult{
-            outcome: {:done, response},
-            state: %{state | messages: new_messages},
-            facts: facts
-          }
+            facts =
+              merge_facts(facts, iter_facts)
+              |> Map.put(:final_response, response)
 
-        {:error, %Error{} = error} ->
-          :telemetry.execute(
-            [:agora, :agent, :loop_iteration, :stop],
-            %{duration: System.monotonic_time() - iter_start},
-            telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:error, error)
-          )
+            %RunResult{
+              outcome: {:done, response},
+              state: %{state | messages: new_messages},
+              facts: facts
+            }
 
-          %RunResult{
-            outcome: {:error, error},
-            state: %{state | messages: state.messages},
-            facts: facts
-          }
+          {:error, %Error{} = error} ->
+            :telemetry.execute(
+              [:agora, :agent, :loop_iteration, :stop],
+              %{duration: System.monotonic_time() - iter_start},
+              telemetry_meta |> Map.put(:iteration, iteration) |> Map.put(:error, error)
+            )
+
+            %RunResult{
+              outcome: {:error, error},
+              state: %{state | messages: state.messages},
+              facts: facts
+            }
+        end
       end
     end
   end
 
   # --- Private: Iteration (fast path — no middleware) ---
 
-  defp do_iteration(messages, config, [], _metadata) do
+  defp do_iteration(messages, config, [], _metadata, cancel_token) do
     case Provider.chat(config.provider, messages, config) do
       {:ok, %Message{tool_calls: tool_calls} = response} when tool_calls != [] ->
-        messages = messages ++ [response]
-        context = build_tool_context(config)
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools, context)
-        tool_msg = Message.tool_results(results)
-        messages = messages ++ [tool_msg]
+        # Check cancellation before tool execution
+        if cancel_token && CancelToken.cancelled?(cancel_token) do
+          {:error, Error.new(:cancelled, "Cancelled before tool execution")}
+        else
+          messages = messages ++ [response]
+          context = build_tool_context(config, cancel_token)
 
-        iter_facts = %{
-          appended_messages: [response, tool_msg],
-          tool_calls_made: tool_calls,
-          tool_results: results
-        }
+          {:ok, results} =
+            ToolBroker.execute(tool_calls, config.tools, context, cancel_token: cancel_token)
 
-        {:continue, messages, %{}, iter_facts}
+          tool_msg = Message.tool_results(results)
+          messages = messages ++ [tool_msg]
+
+          iter_facts = %{
+            appended_messages: [response, tool_msg],
+            tool_calls_made: tool_calls,
+            tool_results: results
+          }
+
+          {:continue, messages, %{}, iter_facts}
+        end
 
       {:ok, %Message{} = response} ->
         messages = messages ++ [response]
@@ -166,7 +200,7 @@ defmodule Agora.Agent.Loop do
 
   # --- Private: Iteration (middleware path) ---
 
-  defp do_iteration(messages, config, middleware, metadata) do
+  defp do_iteration(messages, config, middleware, metadata, cancel_token) do
     # Hook 1: before_provider_call
     ctx =
       Context.new(
@@ -209,14 +243,20 @@ defmodule Agora.Agent.Loop do
 
               {:ok, ctx} ->
                 if ctx.tool_calls != [] do
-                  handle_tool_calls(
-                    iter_messages,
-                    ctx.response,
-                    ctx.tool_calls,
-                    iter_config,
-                    middleware,
-                    ctx.metadata
-                  )
+                  # Check cancellation before tool execution
+                  if cancel_token && CancelToken.cancelled?(cancel_token) do
+                    {:error, Error.new(:cancelled, "Cancelled before tool execution")}
+                  else
+                    handle_tool_calls(
+                      iter_messages,
+                      ctx.response,
+                      ctx.tool_calls,
+                      iter_config,
+                      middleware,
+                      ctx.metadata,
+                      cancel_token
+                    )
+                  end
                 else
                   # Scrub stale tool_calls from response before persisting
                   final_response =
@@ -236,7 +276,15 @@ defmodule Agora.Agent.Loop do
 
   # --- Private: Tool call handling ---
 
-  defp handle_tool_calls(messages, response, tool_calls, iter_config, middleware, metadata) do
+  defp handle_tool_calls(
+         messages,
+         response,
+         tool_calls,
+         iter_config,
+         middleware,
+         metadata,
+         cancel_token
+       ) do
     # Hook 3: before_tool_call
     ctx =
       Context.new(
@@ -256,45 +304,54 @@ defmodule Agora.Agent.Loop do
         approved_calls = ctx.tool_calls
         metadata = ctx.metadata
 
-        # D14: If middleware filtered tool_calls, construct modified assistant message
-        assistant_msg =
-          if approved_calls == response.tool_calls do
-            response
-          else
-            %{response | tool_calls: approved_calls}
+        # Re-check cancellation after middleware (may have happened during :before_tool_call)
+        if cancel_token && CancelToken.cancelled?(cancel_token) do
+          {:error, Error.new(:cancelled, "Cancelled before tool execution")}
+        else
+          # D14: If middleware filtered tool_calls, construct modified assistant message
+          assistant_msg =
+            if approved_calls == response.tool_calls do
+              response
+            else
+              %{response | tool_calls: approved_calls}
+            end
+
+          messages = messages ++ [assistant_msg]
+          context = build_tool_context(iter_config, cancel_token)
+
+          {:ok, results} =
+            ToolBroker.execute(approved_calls, iter_config.tools, context,
+              cancel_token: cancel_token
+            )
+
+          # Hook 4: after_tool_call
+          ctx =
+            Context.new(
+              hook: :after_tool_call,
+              messages: messages,
+              response: assistant_msg,
+              tool_calls: approved_calls,
+              tool_results: results,
+              config: iter_config,
+              metadata: metadata
+            )
+
+          case Chain.run(middleware, ctx) do
+            {:halt, reason} ->
+              {:error, wrap_halt_reason(reason)}
+
+            {:ok, ctx} ->
+              tool_msg = Message.tool_results(ctx.tool_results)
+              new_messages = messages ++ [tool_msg]
+
+              iter_facts = %{
+                appended_messages: [assistant_msg, tool_msg],
+                tool_calls_made: approved_calls,
+                tool_results: ctx.tool_results
+              }
+
+              {:continue, new_messages, ctx.metadata, iter_facts}
           end
-
-        messages = messages ++ [assistant_msg]
-        context = build_tool_context(iter_config)
-        {:ok, results} = ToolBroker.execute(approved_calls, iter_config.tools, context)
-
-        # Hook 4: after_tool_call
-        ctx =
-          Context.new(
-            hook: :after_tool_call,
-            messages: messages,
-            response: assistant_msg,
-            tool_calls: approved_calls,
-            tool_results: results,
-            config: iter_config,
-            metadata: metadata
-          )
-
-        case Chain.run(middleware, ctx) do
-          {:halt, reason} ->
-            {:error, wrap_halt_reason(reason)}
-
-          {:ok, ctx} ->
-            tool_msg = Message.tool_results(ctx.tool_results)
-            new_messages = messages ++ [tool_msg]
-
-            iter_facts = %{
-              appended_messages: [assistant_msg, tool_msg],
-              tool_calls_made: approved_calls,
-              tool_results: ctx.tool_results
-            }
-
-            {:continue, new_messages, ctx.metadata, iter_facts}
         end
     end
   end
@@ -322,13 +379,20 @@ defmodule Agora.Agent.Loop do
     }
   end
 
-  defp build_tool_context(config) do
+  defp build_tool_context(config, cancel_token) do
     base = %{agent_name: config.name}
 
     base =
       case Keyword.get(config.provider_opts, :_agora_tool_depth) do
         nil -> base
         depth -> Map.put(base, :agora_tool_depth, depth)
+      end
+
+    base =
+      if cancel_token do
+        Map.put(base, :cancel_token, cancel_token)
+      else
+        base
       end
 
     case Keyword.get(config.tool_opts, :sandbox) do

@@ -332,23 +332,43 @@ defmodule Agora.Workflow.Executor do
     else
       level_start = System.monotonic_time(:millisecond)
 
+      cancel_token = run_ctx.cancel_token
+
       task_entries =
         Enum.map(runnable, fn step_id ->
           step = Map.fetch!(workflow.steps, step_id)
 
           task =
-            Task.Supervisor.async_nolink(run_ctx.supervisor, fn ->
-              if cancelled?(run_ctx) do
-                {:error, Error.new(:cancelled, "Step cancelled")}
-              else
-                execute_step(step, results, run_ctx)
-              end
-            end)
+            if cancel_token do
+              t =
+                Task.Supervisor.async_nolink(run_ctx.supervisor, fn ->
+                  receive do
+                    :registered ->
+                      if cancelled?(run_ctx) do
+                        {:error, Error.new(:cancelled, "Step cancelled")}
+                      else
+                        execute_step(step, results, run_ctx)
+                      end
+                  end
+                end)
+
+              CancelToken.register(cancel_token, t.pid)
+              send(t.pid, :registered)
+              t
+            else
+              Task.Supervisor.async_nolink(run_ctx.supervisor, fn ->
+                if cancelled?(run_ctx) do
+                  {:error, Error.new(:cancelled, "Step cancelled")}
+                else
+                  execute_step(step, results, run_ctx)
+                end
+              end)
+            end
 
           {task, step}
         end)
 
-      step_outcomes = collect_all_results(task_entries, level_start)
+      step_outcomes = collect_all_results(task_entries, level_start, cancel_token)
 
       {new_results, checkpoint_state, checkpoint, error} =
         process_outcomes(step_outcomes, results, checkpoint_state, checkpoint, run_ctx)
@@ -557,11 +577,13 @@ defmodule Agora.Workflow.Executor do
       maybe_inject_context_policy(config, run_ctx.context_policy, run_ctx.telemetry_metadata)
 
     message = build_agent_message(step, results)
+    cancel_token = run_ctx.cancel_token
+    opts = if cancel_token, do: [cancel_token: cancel_token], else: []
 
     case Agora.Agent.Supervisor.start_agent(config) do
       {:ok, pid} ->
         try do
-          case Agora.Agent.run(pid, message) do
+          case Agora.Agent.run(pid, message, opts) do
             {:ok, response} -> {:ok, response}
             {:error, _} = error -> error
           end
@@ -625,7 +647,7 @@ defmodule Agora.Workflow.Executor do
 
   # --- Result collection (deadline-based) ---
 
-  defp collect_all_results(task_entries, level_start_time) do
+  defp collect_all_results(task_entries, level_start_time, cancel_token) do
     Enum.map(task_entries, fn {task, step} ->
       elapsed_ms = System.monotonic_time(:millisecond) - level_start_time
       remaining = max(step.timeout - elapsed_ms, 0)
@@ -635,6 +657,9 @@ defmodule Agora.Workflow.Executor do
           {:ok, result} ->
             result
 
+          {:exit, :killed} ->
+            {:error, Error.new(:cancelled, "Step #{inspect(step.id)} killed")}
+
           {:exit, reason} ->
             {:error,
              Error.new(:workflow_error, "Step #{inspect(step.id)} exited: #{inspect(reason)}")}
@@ -642,6 +667,9 @@ defmodule Agora.Workflow.Executor do
           nil ->
             {:error, Error.new(:timeout, "Step #{inspect(step.id)} timed out")}
         end
+
+      # Unregister step task from cancel group
+      if cancel_token, do: CancelToken.unregister(cancel_token, task.pid)
 
       {step, outcome}
     end)

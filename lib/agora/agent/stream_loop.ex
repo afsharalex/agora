@@ -7,7 +7,7 @@ defmodule Agora.Agent.StreamLoop do
   # making the loop testable in isolation and backend-agnostic.
 
   alias Agora.Agent.Loop.State
-  alias Agora.{Error, Message, Provider, StreamEvent, ToolBroker}
+  alias Agora.{CancelToken, Error, Message, Provider, StreamEvent, ToolBroker}
   alias Agora.Middleware.{Chain, Context}
   alias Agora.Provider.StreamAccumulator
 
@@ -26,115 +26,137 @@ defmodule Agora.Agent.StreamLoop do
 
   defp streaming_loop(messages, state, emit_fn, iteration, metadata) do
     config = state.config
+    cancel_token = state.cancel_token
 
     # Crash recovery hook: called at the start of each iteration
     if state.on_messages_update, do: state.on_messages_update.(messages)
 
-    if iteration >= config.max_iterations do
-      error =
-        Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
-          max_iterations: config.max_iterations,
-          iterations: iteration
-        })
-
+    # Check cancellation before anything else
+    if cancel_token && CancelToken.cancelled?(cancel_token) do
+      error = Error.new(:cancelled, "Stream cancelled")
       emit_fn.(StreamEvent.error(error))
       emit_fn.(StreamEvent.done())
       {:error, error, messages}
     else
-      iteration = iteration + 1
-      middleware = config.middleware
+      if iteration >= config.max_iterations do
+        error =
+          Error.new(:iteration_limit, "Reached maximum iterations (#{config.max_iterations})", %{
+            max_iterations: config.max_iterations,
+            iterations: iteration
+          })
 
-      # Run :before_provider_call middleware
-      {messages, config, metadata} =
-        case run_streaming_hook(:before_provider_call, messages, config, middleware, metadata) do
-          {:ok, ctx} ->
-            {ctx.messages, ctx.config, ctx.metadata}
+        emit_fn.(StreamEvent.error(error))
+        emit_fn.(StreamEvent.done())
+        {:error, error, messages}
+      else
+        iteration = iteration + 1
+        middleware = config.middleware
 
-          {:halt, reason} ->
-            error = wrap_halt_reason(reason)
+        # Run :before_provider_call middleware
+        {messages, config, metadata} =
+          case run_streaming_hook(:before_provider_call, messages, config, middleware, metadata) do
+            {:ok, ctx} ->
+              {ctx.messages, ctx.config, ctx.metadata}
+
+            {:halt, reason} ->
+              error = wrap_halt_reason(reason)
+              emit_fn.(StreamEvent.error(error))
+              emit_fn.(StreamEvent.done())
+              throw({:halt, error, messages})
+          end
+
+        case Provider.stream_chat(config.provider, messages, config) do
+          {:error, %Error{} = error} ->
             emit_fn.(StreamEvent.error(error))
             emit_fn.(StreamEvent.done())
-            throw({:halt, error, messages})
-        end
+            {:error, error, messages}
 
-      case Provider.stream_chat(config.provider, messages, config) do
-        {:error, %Error{} = error} ->
-          emit_fn.(StreamEvent.error(error))
-          emit_fn.(StreamEvent.done())
-          {:error, error, messages}
+          {:ok, %{pid: provider_pid, ref: provider_ref}} ->
+            # Register provider stream task in cancel group
+            if cancel_token, do: CancelToken.register(cancel_token, provider_pid)
 
-        {:ok, %{pid: provider_pid, ref: provider_ref}} ->
-          relay_result =
-            relay_events(
-              provider_pid,
-              provider_ref,
-              emit_fn,
-              StreamAccumulator.new(),
-              middleware,
-              metadata,
-              messages,
-              config
-            )
+            relay_result =
+              relay_events(
+                provider_pid,
+                provider_ref,
+                emit_fn,
+                StreamAccumulator.new(),
+                middleware,
+                metadata,
+                messages,
+                config,
+                cancel_token
+              )
 
-          case relay_result do
-            {:error, error, _acc, _metadata} ->
-              emit_fn.(StreamEvent.done())
-              {:error, error, messages}
+            case relay_result do
+              {:error, error, _acc, _metadata} ->
+                emit_fn.(StreamEvent.done())
+                {:error, error, messages}
 
-            {:ok, acc, metadata} ->
-              message = StreamAccumulator.to_message(acc)
+              {:ok, acc, metadata} ->
+                message = StreamAccumulator.to_message(acc)
 
-              # Run :after_provider_call middleware
-              {message, tool_calls, metadata} =
-                case run_after_provider_call(message, messages, config, middleware, metadata) do
-                  {:ok, ctx} ->
-                    {ctx.response, ctx.tool_calls, ctx.metadata}
+                # Run :after_provider_call middleware
+                {message, tool_calls, metadata} =
+                  case run_after_provider_call(message, messages, config, middleware, metadata) do
+                    {:ok, ctx} ->
+                      {ctx.response, ctx.tool_calls, ctx.metadata}
 
-                  {:halt, reason} ->
-                    error = wrap_halt_reason(reason)
-                    emit_fn.(StreamEvent.error(error))
-                    emit_fn.(StreamEvent.done())
-                    throw({:halt, error, messages ++ [message]})
-                end
+                    {:halt, reason} ->
+                      error = wrap_halt_reason(reason)
+                      emit_fn.(StreamEvent.error(error))
+                      emit_fn.(StreamEvent.done())
+                      throw({:halt, error, messages ++ [message]})
+                  end
 
-              if tool_calls != [] do
-                assistant_msg = %{message | tool_calls: tool_calls}
-                new_messages = messages ++ [assistant_msg]
-
-                case execute_streaming_tools(
-                       tool_calls,
-                       config,
-                       middleware,
-                       metadata,
-                       emit_fn
-                     ) do
-                  {:halt, error, _results, _metadata} ->
+                if tool_calls != [] do
+                  # Check cancellation before tool execution
+                  if cancel_token && CancelToken.cancelled?(cancel_token) do
+                    error = Error.new(:cancelled, "Cancelled before tool execution")
                     emit_fn.(StreamEvent.error(error))
                     emit_fn.(StreamEvent.done())
                     {:error, error, messages}
-
-                  {:ok, tool_results, metadata} ->
-                    tool_msg = Message.tool_results(tool_results)
-                    new_messages = new_messages ++ [tool_msg]
-
-                    streaming_loop(new_messages, state, emit_fn, iteration, metadata)
-                end
-              else
-                # Final text response — done
-                final_response =
-                  if message.tool_calls != [] do
-                    %{message | tool_calls: []}
                   else
-                    message
+                    assistant_msg = %{message | tool_calls: tool_calls}
+                    new_messages = messages ++ [assistant_msg]
+
+                    case execute_streaming_tools(
+                           tool_calls,
+                           config,
+                           middleware,
+                           metadata,
+                           emit_fn,
+                           cancel_token
+                         ) do
+                      {:halt, error, _results, _metadata} ->
+                        emit_fn.(StreamEvent.error(error))
+                        emit_fn.(StreamEvent.done())
+                        {:error, error, messages}
+
+                      {:ok, tool_results, metadata} ->
+                        tool_msg = Message.tool_results(tool_results)
+                        new_messages = new_messages ++ [tool_msg]
+
+                        streaming_loop(new_messages, state, emit_fn, iteration, metadata)
+                    end
                   end
+                else
+                  # Final text response — done
+                  final_response =
+                    if message.tool_calls != [] do
+                      %{message | tool_calls: []}
+                    else
+                      message
+                    end
 
-                new_messages = messages ++ [final_response]
+                  new_messages = messages ++ [final_response]
 
-                emit_fn.(StreamEvent.message_complete(final_response))
-                emit_fn.(StreamEvent.done())
-                {:ok, new_messages, %{iteration: iteration, middleware_metadata: metadata}}
-              end
-          end
+                  emit_fn.(StreamEvent.message_complete(final_response))
+                  emit_fn.(StreamEvent.done())
+                  {:ok, new_messages, %{iteration: iteration, middleware_metadata: metadata}}
+                end
+            end
+        end
       end
     end
   catch
@@ -151,49 +173,97 @@ defmodule Agora.Agent.StreamLoop do
          middleware,
          metadata,
          messages,
-         config
+         config,
+         cancel_token
        ) do
     mref = Process.monitor(provider_pid)
 
     result =
-      do_relay(mref, provider_ref, emit_fn, acc, middleware, metadata, messages, config)
+      do_relay(
+        mref,
+        provider_ref,
+        emit_fn,
+        acc,
+        middleware,
+        metadata,
+        messages,
+        config,
+        cancel_token
+      )
 
     Process.demonitor(mref, [:flush])
     result
   end
 
-  defp do_relay(mref, provider_ref, emit_fn, acc, middleware, metadata, messages, config) do
-    receive do
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :done}} ->
-        {:ok, acc, metadata}
+  defp do_relay(
+         mref,
+         provider_ref,
+         emit_fn,
+         acc,
+         middleware,
+         metadata,
+         messages,
+         config,
+         cancel_token
+       ) do
+    # Check cancellation at relay granularity (between each chunk)
+    if cancel_token && CancelToken.cancelled?(cancel_token) do
+      error = Error.new(:cancelled, "Stream cancelled")
+      emit_fn.(StreamEvent.error(error))
+      {:error, error, acc, metadata}
+    else
+      receive do
+        {Agora.Stream, ^provider_ref, %StreamEvent{type: :done}} ->
+          {:ok, acc, metadata}
 
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :error} = event} ->
-        maybe_forward_event(event, emit_fn, middleware, metadata, messages, config)
-        {:error, event.data, acc, metadata}
+        {Agora.Stream, ^provider_ref, %StreamEvent{type: :error} = event} ->
+          maybe_forward_event(event, emit_fn, middleware, metadata, messages, config)
+          {:error, event.data, acc, metadata}
 
-      {Agora.Stream, ^provider_ref, %StreamEvent{type: :message_complete}} ->
-        # Provider sent message_complete — we'll send our own after middleware
-        do_relay(mref, provider_ref, emit_fn, acc, middleware, metadata, messages, config)
+        {Agora.Stream, ^provider_ref, %StreamEvent{type: :message_complete}} ->
+          # Provider sent message_complete — we'll send our own after middleware
+          do_relay(
+            mref,
+            provider_ref,
+            emit_fn,
+            acc,
+            middleware,
+            metadata,
+            messages,
+            config,
+            cancel_token
+          )
 
-      {Agora.Stream, ^provider_ref, %StreamEvent{} = event} ->
-        acc = StreamAccumulator.apply(acc, event)
+        {Agora.Stream, ^provider_ref, %StreamEvent{} = event} ->
+          acc = StreamAccumulator.apply(acc, event)
 
-        {event, metadata} =
-          maybe_run_stream_middleware(event, middleware, metadata, messages, config)
+          {event, metadata} =
+            maybe_run_stream_middleware(event, middleware, metadata, messages, config)
 
-        if event, do: emit_fn.(event)
+          if event, do: emit_fn.(event)
 
-        do_relay(mref, provider_ref, emit_fn, acc, middleware, metadata, messages, config)
+          do_relay(
+            mref,
+            provider_ref,
+            emit_fn,
+            acc,
+            middleware,
+            metadata,
+            messages,
+            config,
+            cancel_token
+          )
 
-      {:DOWN, ^mref, :process, _, reason} ->
-        error = Error.new(:streaming_error, "Provider stream crashed: #{inspect(reason)}")
-        emit_fn.(StreamEvent.error(error))
-        {:error, error, acc, metadata}
-    after
-      300_000 ->
-        error = Error.new(:timeout, "Provider stream timed out after 300s")
-        emit_fn.(StreamEvent.error(error))
-        {:error, error, acc, metadata}
+        {:DOWN, ^mref, :process, _, reason} ->
+          error = Error.new(:streaming_error, "Provider stream crashed: #{inspect(reason)}")
+          emit_fn.(StreamEvent.error(error))
+          {:error, error, acc, metadata}
+      after
+        300_000 ->
+          error = Error.new(:timeout, "Provider stream timed out after 300s")
+          emit_fn.(StreamEvent.error(error))
+          {:error, error, acc, metadata}
+      end
     end
   end
 
@@ -276,7 +346,7 @@ defmodule Agora.Agent.StreamLoop do
 
   # --- Private: Tool execution ---
 
-  defp execute_streaming_tools(tool_calls, config, middleware, metadata, emit_fn) do
+  defp execute_streaming_tools(tool_calls, config, middleware, metadata, emit_fn, cancel_token) do
     # Run :before_tool_call middleware if present
     {tool_calls, metadata, halted?} =
       if middleware != [] do
@@ -302,44 +372,59 @@ defmodule Agora.Agent.StreamLoop do
         {:halt, error, [], metadata}
 
       false ->
-        context = build_tool_context(config)
-        {:ok, results} = ToolBroker.execute(tool_calls, config.tools, context)
-
-        # Emit tool_result events via callback
-        Enum.each(results, fn result ->
-          emit_fn.(StreamEvent.tool_result(result))
-        end)
-
-        # Run :after_tool_call middleware if present
-        if middleware != [] do
-          ctx =
-            Context.new(
-              hook: :after_tool_call,
-              tool_calls: tool_calls,
-              tool_results: results,
-              config: config,
-              metadata: metadata
-            )
-
-          case Chain.run(middleware, ctx) do
-            {:ok, ctx} -> {:ok, results, ctx.metadata}
-            {:halt, reason} -> {:halt, wrap_halt_reason(reason), results, metadata}
-          end
+        # Re-check cancellation after middleware (may have happened during :before_tool_call)
+        if cancel_token && CancelToken.cancelled?(cancel_token) do
+          error = Error.new(:cancelled, "Cancelled before tool execution")
+          {:halt, error, [], metadata}
         else
-          {:ok, results, metadata}
+          context = build_tool_context(config, cancel_token)
+
+          {:ok, results} =
+            ToolBroker.execute(tool_calls, config.tools, context, cancel_token: cancel_token)
+
+          # Emit tool_result events via callback
+          Enum.each(results, fn result ->
+            emit_fn.(StreamEvent.tool_result(result))
+          end)
+
+          # Run :after_tool_call middleware if present
+          if middleware != [] do
+            ctx =
+              Context.new(
+                hook: :after_tool_call,
+                tool_calls: tool_calls,
+                tool_results: results,
+                config: config,
+                metadata: metadata
+              )
+
+            case Chain.run(middleware, ctx) do
+              {:ok, ctx} -> {:ok, results, ctx.metadata}
+              {:halt, reason} -> {:halt, wrap_halt_reason(reason), results, metadata}
+            end
+          else
+            {:ok, results, metadata}
+          end
         end
     end
   end
 
   # --- Private: Tool context ---
 
-  defp build_tool_context(config) do
+  defp build_tool_context(config, cancel_token) do
     base = %{agent_name: config.name}
 
     base =
       case Keyword.get(config.provider_opts, :_agora_tool_depth) do
         nil -> base
         depth -> Map.put(base, :agora_tool_depth, depth)
+      end
+
+    base =
+      if cancel_token do
+        Map.put(base, :cancel_token, cancel_token)
+      else
+        base
       end
 
     case Keyword.get(config.tool_opts, :sandbox) do

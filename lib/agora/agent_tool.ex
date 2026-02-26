@@ -21,9 +21,10 @@ defmodule Agora.AgentTool do
 
   ## Cancel Token Propagation
 
-  Cancel token propagation from parent to child agent is **not yet implemented**.
-  This requires threading the token through Runner → Agent → Loop → ToolBroker,
-  which is deferred to a follow-up.
+  Cancel tokens are automatically propagated from parent to child agent
+  via the tool context. When the parent agent's cancel token is set, it
+  is passed through the tool broker context and forwarded to
+  `Agora.run/3` for the child agent.
 
   ## Examples
 
@@ -83,6 +84,7 @@ defmodule Agora.AgentTool do
   defp build_function(config, max_depth) do
     fn %{"task" => task}, ctx ->
       current_depth = Map.get(ctx, :agora_tool_depth, 0)
+      cancel_token = Map.get(ctx, :cancel_token)
 
       if current_depth >= max_depth do
         {:error, "Agent tool depth #{current_depth} exceeds max_depth #{max_depth}"}
@@ -91,8 +93,9 @@ defmodule Agora.AgentTool do
           Keyword.put(config.provider_opts, :_agora_tool_depth, current_depth + 1)
 
         child_config = struct!(config, provider_opts: child_provider_opts)
+        opts = if cancel_token, do: [cancel_token: cancel_token], else: []
 
-        case Agora.run(child_config, task) do
+        case Agora.run(child_config, task, opts) do
           {:ok, message} -> {:ok, message.content || ""}
           {:error, %Error{} = error} -> {:error, to_string(error)}
         end
